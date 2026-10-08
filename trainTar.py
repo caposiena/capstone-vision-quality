@@ -1,19 +1,17 @@
 """
 trainTar.py
 
-Primo training pilota YOLO per il progetto visionTar.
+Training YOLO per il progetto visionTar.
 
 Uso tipico:
     python trainTar.py --data dataset/data.yaml
 
-Il dataset deve essere estratto localmente nella cartella:
+Il dataset deve essere disponibile localmente nella cartella:
     dataset/
 
-Il training produce i risultati nella cartella:
-    runs/train/taralli_pilot/
-
-Il modello migliore sara disponibile in:
-    runs/train/taralli_pilot/weights/best.pt
+Il percorso reale dei risultati viene letto direttamente da Ultralytics
+a fine training, cosi non dipende dalla struttura interna della versione
+installata.
 """
 
 from __future__ import annotations
@@ -76,10 +74,10 @@ def main() -> None:
     if not data_path.exists():
         raise FileNotFoundError(
             f"Dataset non trovato: {data_path.resolve()}\n"
-            "Estrai prima taralli_yolo_pilot.zip nella cartella dataset/."
+            "Verifica che il dataset sia stato estratto correttamente."
         )
 
-    print("=== visionTar - primo training YOLO ===")
+    print("=== visionTar - training YOLO ===")
     print(f"Dataset : {data_path}")
     print(f"Modello : {args.model}")
     print(f"Epoche  : {args.epochs}")
@@ -102,12 +100,24 @@ def main() -> None:
         verbose=True,
     )
 
-    run_dir = Path("runs/train") / args.name
+    trainer = getattr(model, "trainer", None)
+    if trainer is None or getattr(trainer, "save_dir", None) is None:
+        raise RuntimeError(
+            "Training completato, ma non e stato possibile determinare "
+            "automaticamente la cartella dei risultati."
+        )
+
+    run_dir = Path(trainer.save_dir)
     best_model = run_dir / "weights" / "best.pt"
 
     print("\n=== TRAINING COMPLETATO ===")
-    print(f"Risultati: {run_dir.resolve()}")
-    print(f"Best model atteso: {best_model.resolve()}")
+    print(f"Risultati reali: {run_dir.resolve()}")
+    print(f"Best model: {best_model.resolve()}")
+
+    if best_model.exists():
+        print("Best model trovato: OK")
+    else:
+        print("ATTENZIONE: best.pt non trovato nel percorso atteso.")
 
 
 if __name__ == "__main__":
