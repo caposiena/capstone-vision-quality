@@ -3,15 +3,14 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 0.2
-- una sola GUI iniziale;
-- selezione del file video MP4;
-- selezione del modello YOLO .pt;
-- pulsante esplicito "Avvia analisi";
+Versione 0.3
+- GUI unica per selezione video e modello;
+- modalita TEST per salvare tutte le detection del modello generico;
+- modalita NORMALE per salvare solo le classi considerate difettose;
 - acquisizione frame tramite OpenCV;
 - object detection tramite Ultralytics YOLO;
 - visualizzazione di bounding box e baricentro;
-- registrazione CSV delle coordinate dei soli taralli classificati come difettosi;
+- registrazione CSV delle coordinate;
 - chiusura ordinata di video, finestra OpenCV e file CSV.
 
 Dipendenze:
@@ -46,29 +45,23 @@ DEFECT_CLASSES = {
 CONFIDENCE_THRESHOLD = 0.35
 
 
-def choose_inputs() -> tuple[Path, Path] | None:
-    """
-    Mostra una sola finestra GUI per selezionare video e modello.
-
-    Restituisce:
-        (video_path, model_path) se l'utente avvia l'analisi;
-        None se la finestra viene chiusa o l'operazione viene annullata.
-    """
+def choose_inputs() -> tuple[Path, Path, bool] | None:
+    """Mostra una sola GUI per selezionare video, modello e modalita di prova."""
 
     root = tk.Tk()
     root.title("visionTar - Selezione input")
-    root.geometry("720x300")
+    root.geometry("760x360")
     root.resizable(False, False)
 
     video_var = tk.StringVar()
     model_var = tk.StringVar()
+    test_mode_var = tk.BooleanVar(value=True)
 
-    # Se il modello di prova esiste nella cartella corrente, lo proponiamo.
     default_model = Path.cwd() / "yolo11n.pt"
     if default_model.exists():
         model_var.set(str(default_model))
 
-    result: dict[str, Path] = {}
+    result: dict[str, object] = {}
 
     def select_video() -> None:
         filename = filedialog.askopenfilename(
@@ -141,6 +134,7 @@ def choose_inputs() -> tuple[Path, Path] | None:
 
         result["video"] = video_path
         result["model"] = model_path
+        result["test_mode"] = bool(test_mode_var.get())
         root.destroy()
 
     def cancel() -> None:
@@ -149,12 +143,11 @@ def choose_inputs() -> tuple[Path, Path] | None:
     container = tk.Frame(root, padx=20, pady=20)
     container.pack(fill="both", expand=True)
 
-    title = tk.Label(
+    tk.Label(
         container,
         text="visionTar - Analisi video con OpenCV + YOLO",
         font=("Segoe UI", 15, "bold"),
-    )
-    title.pack(pady=(0, 20))
+    ).pack(pady=(0, 20))
 
     video_frame = tk.Frame(container)
     video_frame.pack(fill="x", pady=5)
@@ -169,7 +162,7 @@ def choose_inputs() -> tuple[Path, Path] | None:
     tk.Entry(
         video_frame,
         textvariable=video_var,
-        width=70,
+        width=76,
         state="readonly",
     ).pack(side="left", padx=(10, 0), fill="x", expand=True)
 
@@ -186,19 +179,31 @@ def choose_inputs() -> tuple[Path, Path] | None:
     tk.Entry(
         model_frame,
         textvariable=model_var,
-        width=70,
+        width=76,
         state="readonly",
     ).pack(side="left", padx=(10, 0), fill="x", expand=True)
 
-    info = tk.Label(
+    test_frame = tk.Frame(container)
+    test_frame.pack(fill="x", pady=(15, 5))
+
+    tk.Checkbutton(
+        test_frame,
+        text=(
+            "Modalita TEST: salva nel CSV tutte le detection del modello "
+            "(utile con yolo11n.pt)"
+        ),
+        variable=test_mode_var,
+    ).pack(side="left")
+
+    tk.Label(
         container,
         text=(
-            "Dopo Avvia analisi si aprira la finestra OpenCV. "
-            "Premi Q oppure ESC per interrompere."
+            "In modalita normale il CSV contiene solo le classi definite come difettose. "
+            "Premi Q oppure ESC per interrompere il video."
         ),
         anchor="w",
-    )
-    info.pack(fill="x", pady=(18, 10))
+        justify="left",
+    ).pack(fill="x", pady=(8, 15))
 
     buttons = tk.Frame(container)
     buttons.pack(fill="x", pady=(10, 0))
@@ -225,7 +230,11 @@ def choose_inputs() -> tuple[Path, Path] | None:
     if "video" not in result or "model" not in result:
         return None
 
-    return result["video"], result["model"]
+    return (
+        result["video"],
+        result["model"],
+        bool(result["test_mode"]),
+    )
 
 
 def draw_detection(
@@ -261,14 +270,16 @@ def draw_detection(
     )
 
 
-def process_video(video_path: Path, model_path: Path) -> Path:
-    """
-    Analizza il video e salva su CSV le coordinate dei taralli difettosi.
-
-    Il CSV viene creato accanto al video con suffisso "_difetti.csv".
-    """
+def process_video(
+    video_path: Path,
+    model_path: Path,
+    test_mode: bool = False,
+) -> Path:
+    """Analizza il video e salva su CSV le coordinate delle detection."""
 
     print(f"Caricamento modello YOLO: {model_path}")
+    print(f"Modalita: {'TEST - tutte le detection' if test_mode else 'NORMALE - soli difetti'}")
+
     model = YOLO(str(model_path))
 
     print(f"Apertura video: {video_path}")
@@ -277,8 +288,11 @@ def process_video(video_path: Path, model_path: Path) -> Path:
     if not capture.isOpened():
         raise RuntimeError(f"Impossibile aprire il video: {video_path}")
 
-    output_path = video_path.with_name(f"{video_path.stem}_difetti.csv")
+    suffix = "_detections_test.csv" if test_mode else "_difetti.csv"
+    output_path = video_path.with_name(f"{video_path.stem}{suffix}")
+
     frame_number = 0
+    saved_rows = 0
 
     try:
         with output_path.open(
@@ -298,6 +312,7 @@ def process_video(video_path: Path, model_path: Path) -> Path:
                     "y1",
                     "x2",
                     "y2",
+                    "difetto",
                 ]
             )
 
@@ -327,8 +342,6 @@ def process_video(video_path: Path, model_path: Path) -> Path:
                         confidence = float(box.conf[0].cpu().item())
                         label = str(model.names[class_id])
 
-                        # In questa prima versione usiamo il centro geometrico
-                        # della bounding box come baricentro operativo.
                         cx = int((x1 + x2) / 2)
                         cy = int((y1 + y2) / 2)
 
@@ -347,7 +360,7 @@ def process_video(video_path: Path, model_path: Path) -> Path:
                             is_defect=is_defect,
                         )
 
-                        if is_defect:
+                        if test_mode or is_defect:
                             writer.writerow(
                                 [
                                     frame_number,
@@ -359,15 +372,21 @@ def process_video(video_path: Path, model_path: Path) -> Path:
                                     y1,
                                     x2,
                                     y2,
+                                    int(is_defect),
                                 ]
                             )
+                            saved_rows += 1
 
                 cv2.putText(
                     frame,
-                    f"Frame: {frame_number}",
+                    (
+                        f"Frame: {frame_number} | "
+                        f"CSV: {saved_rows} | "
+                        f"{'TEST' if test_mode else 'NORMALE'}"
+                    ),
                     (15, 30),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.70,
+                    0.65,
                     (255, 255, 255),
                     2,
                     cv2.LINE_AA,
@@ -388,12 +407,14 @@ def process_video(video_path: Path, model_path: Path) -> Path:
         capture.release()
         cv2.destroyAllWindows()
 
+    print(f"Righe salvate nel CSV: {saved_rows}")
     print(f"File CSV chiuso correttamente: {output_path}")
+
     return output_path
 
 
 def show_final_message(title: str, text: str, error: bool = False) -> None:
-    """Mostra il messaggio finale in una finestra separata e controllata."""
+    """Mostra il messaggio finale in una finestra separata."""
     root = tk.Tk()
     root.withdraw()
 
@@ -412,12 +433,13 @@ def main() -> None:
         print("Operazione annullata.")
         return
 
-    video_path, model_path = selected
+    video_path, model_path, test_mode = selected
 
     try:
         output_path = process_video(
             video_path=video_path,
             model_path=model_path,
+            test_mode=test_mode,
         )
     except Exception as exc:
         print(f"Errore: {exc}")
