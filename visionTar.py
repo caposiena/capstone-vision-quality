@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 0.3
+Versione 0.4
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -18,8 +18,8 @@ Dipendenze:
 
 Nota:
 Le classi considerate difettose sono definite in DEFECT_CLASSES.
-Dopo l'addestramento definitivo del modello YOLO, aggiornare questo insieme
-in modo che corrisponda esattamente ai nomi delle classi del dataset.
+Per il dataset V2 le classi difettose sono blob, cotto, poco e rotto.
+La sola classe non difettosa e buono.
 """
 
 from __future__ import annotations
@@ -34,12 +34,10 @@ from ultralytics import YOLO
 
 
 DEFECT_CLASSES = {
-    "poco_cotto",
-    "troppo_cotto",
-    "forma_anomala",
-    "sovrapposto",
-    "difettoso",
-    "scarto",
+    "blob",
+    "cotto",
+    "poco",
+    "rotto",
 }
 
 CONFIDENCE_THRESHOLD = 0.35
