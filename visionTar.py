@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 0.4
+Versione 0.5
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -41,6 +41,11 @@ DEFECT_CLASSES = {
 }
 
 CONFIDENCE_THRESHOLD = 0.35
+
+# Area centrale di ispezione. Le detection con baricentro fuori da questa
+# regione vengono ignorate per ridurre falsi positivi ai bordi del frame.
+ROI_X_MARGIN_RATIO = 0.08
+ROI_Y_MARGIN_RATIO = 0.20
 
 
 def choose_inputs() -> tuple[Path, Path, bool] | None:
@@ -332,11 +337,38 @@ def process_video(
 
                 frame_number += 1
 
+                frame_height, frame_width = frame.shape[:2]
+                roi_x1 = int(frame_width * ROI_X_MARGIN_RATIO)
+                roi_x2 = int(frame_width * (1.0 - ROI_X_MARGIN_RATIO))
+                roi_y1 = int(frame_height * ROI_Y_MARGIN_RATIO)
+                roi_y2 = int(frame_height * (1.0 - ROI_Y_MARGIN_RATIO))
+
+                # NMS agnostica rispetto alla classe: se due box di classi
+                # diverse descrivono lo stesso oggetto, resta quella piu forte.
                 result = model.predict(
                     source=frame,
                     conf=CONFIDENCE_THRESHOLD,
+                    agnostic_nms=True,
                     verbose=False,
                 )[0]
+
+                cv2.rectangle(
+                    frame,
+                    (roi_x1, roi_y1),
+                    (roi_x2, roi_y2),
+                    (180, 180, 180),
+                    1,
+                )
+                cv2.putText(
+                    frame,
+                    "AREA DI ISPEZIONE",
+                    (roi_x1 + 5, max(20, roi_y1 - 8)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.50,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
 
                 if result.boxes is not None:
                     for box in result.boxes:
@@ -351,6 +383,11 @@ def process_video(
 
                         cx = int((x1 + x2) / 2)
                         cy = int((y1 + y2) / 2)
+
+                        # Considera solo oggetti il cui baricentro e dentro
+                        # l'area centrale di ispezione.
+                        if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2):
+                            continue
 
                         is_defect = label in DEFECT_CLASSES
 
