@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 0.5
+Versione 0.6
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -44,21 +44,27 @@ CONFIDENCE_THRESHOLD = 0.35
 
 # Area centrale di ispezione. Le detection con baricentro fuori da questa
 # regione vengono ignorate per ridurre falsi positivi ai bordi del frame.
-ROI_X_MARGIN_RATIO = 0.08
-ROI_Y_MARGIN_RATIO = 0.20
+ROI_LEFT_RATIO = 0.08
+ROI_RIGHT_RATIO = 0.08
+ROI_TOP_RATIO = 0.20
+ROI_BOTTOM_RATIO = 0.20
 
 
-def choose_inputs() -> tuple[Path, Path, bool] | None:
+def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | None:
     """Mostra una sola GUI per selezionare video, modello e modalita di prova."""
 
     root = tk.Tk()
     root.title("visionTar - Selezione input")
-    root.geometry("760x360")
+    root.geometry("820x560")
     root.resizable(False, False)
 
     video_var = tk.StringVar()
     model_var = tk.StringVar()
     test_mode_var = tk.BooleanVar(value=True)
+    roi_left_var = tk.DoubleVar(value=ROI_LEFT_RATIO * 100)
+    roi_right_var = tk.DoubleVar(value=ROI_RIGHT_RATIO * 100)
+    roi_top_var = tk.DoubleVar(value=ROI_TOP_RATIO * 100)
+    roi_bottom_var = tk.DoubleVar(value=ROI_BOTTOM_RATIO * 100)
 
     default_model = Path.cwd() / "yolo11n.pt"
     if default_model.exists():
@@ -135,9 +141,26 @@ def choose_inputs() -> tuple[Path, Path, bool] | None:
             )
             return
 
+        left = roi_left_var.get() / 100.0
+        right = roi_right_var.get() / 100.0
+        top = roi_top_var.get() / 100.0
+        bottom = roi_bottom_var.get() / 100.0
+
+        if left + right >= 0.90 or top + bottom >= 0.90:
+            messagebox.showwarning(
+                "visionTar",
+                "Area di ispezione troppo stretta: riduci i margini ROI.",
+                parent=root,
+            )
+            return
+
         result["video"] = video_path
         result["model"] = model_path
         result["test_mode"] = bool(test_mode_var.get())
+        result["roi_left"] = left
+        result["roi_right"] = right
+        result["roi_top"] = top
+        result["roi_bottom"] = bottom
         root.destroy()
 
     def cancel() -> None:
@@ -198,14 +221,48 @@ def choose_inputs() -> tuple[Path, Path, bool] | None:
         variable=test_mode_var,
     ).pack(side="left")
 
+    roi_frame = tk.LabelFrame(
+        container,
+        text="Area di ispezione - margini ROI (%)",
+        padx=10,
+        pady=8,
+    )
+    roi_frame.pack(fill="x", pady=(12, 8))
+
+    roi_items = [
+        ("Sinistra", roi_left_var),
+        ("Destra", roi_right_var),
+        ("Alto", roi_top_var),
+        ("Basso", roi_bottom_var),
+    ]
+
+    for row_index, (label_text, variable) in enumerate(roi_items):
+        tk.Label(roi_frame, text=label_text, width=10, anchor="w").grid(
+            row=row_index, column=0, sticky="w"
+        )
+        tk.Scale(
+            roi_frame,
+            from_=0,
+            to=45,
+            orient="horizontal",
+            resolution=1,
+            variable=variable,
+            length=560,
+            showvalue=True,
+        ).grid(row=row_index, column=1, sticky="ew", padx=(8, 0))
+
+    roi_frame.grid_columnconfigure(1, weight=1)
+
     tk.Label(
         container,
         text=(
-            "In modalita normale il CSV contiene solo le classi definite come difettose. "
-            "Premi Q oppure ESC per interrompere il video."
+            "I quattro slider restringono l'area analizzata dai bordi del video. "
+            "In modalita normale il CSV contiene solo le classi difettose. "
+            "Premi Q oppure ESC per interrompere."
         ),
         anchor="w",
         justify="left",
+        wraplength=760,
     ).pack(fill="x", pady=(8, 15))
 
     buttons = tk.Frame(container)
@@ -237,6 +294,10 @@ def choose_inputs() -> tuple[Path, Path, bool] | None:
         result["video"],
         result["model"],
         bool(result["test_mode"]),
+        float(result["roi_left"]),
+        float(result["roi_right"]),
+        float(result["roi_top"]),
+        float(result["roi_bottom"]),
     )
 
 
@@ -286,6 +347,10 @@ def process_video(
     video_path: Path,
     model_path: Path,
     test_mode: bool = False,
+    roi_left: float = ROI_LEFT_RATIO,
+    roi_right: float = ROI_RIGHT_RATIO,
+    roi_top: float = ROI_TOP_RATIO,
+    roi_bottom: float = ROI_BOTTOM_RATIO,
 ) -> Path:
     """Analizza il video e salva su CSV le coordinate delle detection."""
 
@@ -338,10 +403,10 @@ def process_video(
                 frame_number += 1
 
                 frame_height, frame_width = frame.shape[:2]
-                roi_x1 = int(frame_width * ROI_X_MARGIN_RATIO)
-                roi_x2 = int(frame_width * (1.0 - ROI_X_MARGIN_RATIO))
-                roi_y1 = int(frame_height * ROI_Y_MARGIN_RATIO)
-                roi_y2 = int(frame_height * (1.0 - ROI_Y_MARGIN_RATIO))
+                roi_x1 = int(frame_width * roi_left)
+                roi_x2 = int(frame_width * (1.0 - roi_right))
+                roi_y1 = int(frame_height * roi_top)
+                roi_y2 = int(frame_height * (1.0 - roi_bottom))
 
                 # NMS agnostica rispetto alla classe: se due box di classi
                 # diverse descrivono lo stesso oggetto, resta quella piu forte.
@@ -477,13 +542,25 @@ def main() -> None:
         print("Operazione annullata.")
         return
 
-    video_path, model_path, test_mode = selected
+    (
+        video_path,
+        model_path,
+        test_mode,
+        roi_left,
+        roi_right,
+        roi_top,
+        roi_bottom,
+    ) = selected
 
     try:
         output_path = process_video(
             video_path=video_path,
             model_path=model_path,
             test_mode=test_mode,
+            roi_left=roi_left,
+            roi_right=roi_right,
+            roi_top=roi_top,
+            roi_bottom=roi_bottom,
         )
     except Exception as exc:
         print(f"Errore: {exc}")
