@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 0.8
+Versione 0.9
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -25,6 +25,8 @@ La sola classe non difettosa e buono.
 from __future__ import annotations
 
 import csv
+import math
+from collections import defaultdict
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -48,9 +50,11 @@ ROI_LEFT_RATIO = 0.08
 ROI_RIGHT_RATIO = 0.08
 ROI_TOP_RATIO = 0.20
 ROI_BOTTOM_RATIO = 0.20
+DEADLINE_X_RATIO = 0.50
+TRACK_MAX_MISSED_FRAMES = 8
 
 
-def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | None:
+def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float, float] | None:
     """Mostra una sola GUI per selezionare video, modello e modalita di prova."""
 
     root = tk.Tk()
@@ -65,6 +69,7 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
     roi_right_var = tk.DoubleVar(value=ROI_RIGHT_RATIO * 100)
     roi_top_var = tk.DoubleVar(value=ROI_TOP_RATIO * 100)
     roi_bottom_var = tk.DoubleVar(value=ROI_BOTTOM_RATIO * 100)
+    deadline_var = tk.DoubleVar(value=DEADLINE_X_RATIO * 100)
     roi_reference_var = tk.StringVar()
     video_size = {"width": None, "height": None}
 
@@ -73,6 +78,7 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
         right = roi_right_var.get()
         top = roi_top_var.get()
         bottom = roi_bottom_var.get()
+        deadline = deadline_var.get()
 
         x1_pct = left
         x2_pct = 100.0 - right
@@ -87,17 +93,20 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
             x2_px = int(width * x2_pct / 100.0)
             y1_px = int(height * y1_pct / 100.0)
             y2_px = int(height * y2_pct / 100.0)
+            deadline_px = int(width * deadline / 100.0)
             roi_reference_var.set(
                 f"BOX ROI: X {x1_pct:.0f}% -> {x2_pct:.0f}%  "
                 f"({x1_px} -> {x2_px} px) | "
                 f"Y {y1_pct:.0f}% -> {y2_pct:.0f}%  "
                 f"({y1_px} -> {y2_px} px) | "
-                f"Dimensione video: {width}x{height}"
+                f"DEADLINE X {deadline:.0f}% ({deadline_px}px) | "
+                f"Video {width}x{height}"
             )
         else:
             roi_reference_var.set(
                 f"BOX ROI: X {x1_pct:.0f}% -> {x2_pct:.0f}% | "
-                f"Y {y1_pct:.0f}% -> {y2_pct:.0f}% "
+                f"Y {y1_pct:.0f}% -> {y2_pct:.0f}% | "
+                f"DEADLINE X {deadline:.0f}% "
                 "(seleziona il video per vedere anche i pixel)"
             )
 
@@ -191,6 +200,7 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
         right = roi_right_var.get() / 100.0
         top = roi_top_var.get() / 100.0
         bottom = roi_bottom_var.get() / 100.0
+        deadline = deadline_var.get() / 100.0
 
         if left + right >= 0.90 or top + bottom >= 0.90:
             messagebox.showwarning(
@@ -207,6 +217,7 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
         result["roi_right"] = right
         result["roi_top"] = top
         result["roi_bottom"] = bottom
+        result["deadline"] = deadline
         root.destroy()
 
     def cancel() -> None:
@@ -280,6 +291,7 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
         ("Destra", roi_right_var),
         ("Alto", roi_top_var),
         ("Basso", roi_bottom_var),
+        ("Deadline X", deadline_var),
     ]
 
     for row_index, (label_text, variable) in enumerate(roi_items):
@@ -289,7 +301,7 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
         tk.Scale(
             roi_frame,
             from_=0,
-            to=45,
+            to=100 if label_text == "Deadline X" else 45,
             orient="horizontal",
             resolution=1,
             variable=variable,
@@ -307,7 +319,7 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
         justify="left",
         font=("Segoe UI", 9, "bold"),
         wraplength=740,
-    ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(10, 0))
+    ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(10, 0))
 
     update_roi_reference()
 
@@ -356,6 +368,7 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
         float(result["roi_right"]),
         float(result["roi_top"]),
         float(result["roi_bottom"]),
+        float(result["deadline"]),
     )
 
 
@@ -409,6 +422,7 @@ def process_video(
     roi_right: float = ROI_RIGHT_RATIO,
     roi_top: float = ROI_TOP_RATIO,
     roi_bottom: float = ROI_BOTTOM_RATIO,
+    deadline_ratio: float = DEADLINE_X_RATIO,
 ) -> Path:
     """Analizza il video e salva su CSV le coordinate delle detection."""
 
@@ -437,6 +451,12 @@ def process_video(
     cv2.createTrackbar("Destra %", window_name, int(roi_right * 100), 45, lambda _v: None)
     cv2.createTrackbar("Alto %", window_name, int(roi_top * 100), 45, lambda _v: None)
     cv2.createTrackbar("Basso %", window_name, int(roi_bottom * 100), 45, lambda _v: None)
+    cv2.createTrackbar("Deadline X %", window_name, int(deadline_ratio * 100), 100, lambda _v: None)
+
+    tracks = {}
+    next_track_id = 1
+    recent_final = None
+    recent_final_until = 0
 
     try:
         with output_path.open(
@@ -457,6 +477,10 @@ def process_video(
                     "x2",
                     "y2",
                     "difetto",
+                    "track_id",
+                    "stato",
+                    "responso_finale",
+                    "confidence_finale",
                 ]
             )
 
@@ -476,6 +500,7 @@ def process_video(
                 live_right = cv2.getTrackbarPos("Destra %", window_name) / 100.0
                 live_top = cv2.getTrackbarPos("Alto %", window_name) / 100.0
                 live_bottom = cv2.getTrackbarPos("Basso %", window_name) / 100.0
+                live_deadline = cv2.getTrackbarPos("Deadline X %", window_name) / 100.0
 
                 # Evita ROI invalide anche durante la regolazione live.
                 if live_left + live_right >= 0.90:
@@ -489,6 +514,8 @@ def process_video(
                 roi_x2 = int(frame_width * (1.0 - live_right))
                 roi_y1 = int(frame_height * live_top)
                 roi_y2 = int(frame_height * (1.0 - live_bottom))
+                deadline_x = int(frame_width * live_deadline)
+                deadline_x = max(roi_x1 + 5, min(roi_x2 - 5, deadline_x))
 
                 # NMS agnostica rispetto alla classe: se due box di classi
                 # diverse descrivono lo stesso oggetto, resta quella piu forte.
@@ -523,56 +550,179 @@ def process_video(
                     cv2.LINE_AA,
                 )
 
+                detections = []
                 if result.boxes is not None:
                     for box in result.boxes:
-                        x1, y1, x2, y2 = map(
-                            int,
-                            box.xyxy[0].cpu().tolist(),
-                        )
-
+                        x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().tolist())
                         class_id = int(box.cls[0].cpu().item())
                         confidence = float(box.conf[0].cpu().item())
                         label = str(model.names[class_id])
-
                         cx = int((x1 + x2) / 2)
                         cy = int((y1 + y2) / 2)
 
-                        # Considera solo oggetti il cui baricentro e dentro
-                        # l'area centrale di ispezione.
                         if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2):
                             continue
 
-                        is_defect = label in DEFECT_CLASSES
-
-                        draw_detection(
-                            frame=frame,
-                            label=label,
-                            confidence=confidence,
-                            x1=x1,
-                            y1=y1,
-                            x2=x2,
-                            y2=y2,
-                            cx=cx,
-                            cy=cy,
-                            is_defect=is_defect,
+                        detections.append(
+                            {
+                                "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                                "cx": cx, "cy": cy,
+                                "label": label, "confidence": confidence,
+                            }
                         )
 
-                        if test_mode or is_defect:
-                            writer.writerow(
-                                [
-                                    frame_number,
-                                    label,
-                                    f"{confidence:.4f}",
-                                    cx,
-                                    cy,
-                                    x1,
-                                    y1,
-                                    x2,
-                                    y2,
-                                    int(is_defect),
-                                ]
-                            )
-                            saved_rows += 1
+                # Tracking leggero per associare lo stesso tarallo tra frame consecutivi.
+                unmatched_track_ids = set(tracks.keys())
+                max_distance = max(45.0, frame_width * 0.10)
+
+                for det in sorted(detections, key=lambda d: d["confidence"], reverse=True):
+                    best_id = None
+                    best_distance = max_distance
+
+                    for track_id in list(unmatched_track_ids):
+                        track = tracks[track_id]
+                        if frame_number - track["last_frame"] > TRACK_MAX_MISSED_FRAMES:
+                            continue
+                        distance = math.hypot(det["cx"] - track["cx"], det["cy"] - track["cy"])
+                        if distance < best_distance:
+                            best_distance = distance
+                            best_id = track_id
+
+                    if best_id is None:
+                        best_id = next_track_id
+                        next_track_id += 1
+                        tracks[best_id] = {
+                            "cx": det["cx"],
+                            "cy": det["cy"],
+                            "prev_cx": None,
+                            "last_frame": frame_number,
+                            "score": defaultdict(float),
+                            "count": defaultdict(int),
+                            "final_label": None,
+                            "final_confidence": None,
+                            "final_frame": None,
+                        }
+                    else:
+                        unmatched_track_ids.discard(best_id)
+
+                    track = tracks[best_id]
+                    previous_cx = track["cx"]
+                    track["prev_cx"] = previous_cx
+                    track["cx"] = det["cx"]
+                    track["cy"] = det["cy"]
+                    track["last_frame"] = frame_number
+                    track["score"][det["label"]] += det["confidence"]
+                    track["count"][det["label"]] += 1
+
+                    crossed = (
+                        track["prev_cx"] is not None
+                        and (track["prev_cx"] - deadline_x) * (det["cx"] - deadline_x) <= 0
+                        and track["prev_cx"] != det["cx"]
+                    )
+                    on_deadline = abs(det["cx"] - deadline_x) <= 6
+
+                    if track["final_label"] is None and (crossed or on_deadline):
+                        final_label = max(track["score"], key=track["score"].get)
+                        final_conf = (
+                            track["score"][final_label] / max(1, track["count"][final_label])
+                        )
+                        track["final_label"] = final_label
+                        track["final_confidence"] = final_conf
+                        track["final_frame"] = frame_number
+                        recent_final = (best_id, final_label, final_conf)
+                        recent_final_until = frame_number + 20
+
+                    display_label = track["final_label"] or det["label"]
+                    display_conf = (
+                        track["final_confidence"]
+                        if track["final_label"] is not None
+                        else det["confidence"]
+                    )
+                    is_final = track["final_label"] is not None
+                    is_defect = display_label in DEFECT_CLASSES
+
+                    draw_detection(
+                        frame=frame,
+                        label=(
+                            f"ID {best_id} | FINALE {display_label}"
+                            if is_final
+                            else f"ID {best_id} | {display_label}"
+                        ),
+                        confidence=display_conf,
+                        x1=det["x1"],
+                        y1=det["y1"],
+                        x2=det["x2"],
+                        y2=det["y2"],
+                        cx=det["cx"],
+                        cy=det["cy"],
+                        is_defect=is_defect,
+                    )
+
+                    if test_mode or is_defect:
+                        writer.writerow(
+                            [
+                                frame_number,
+                                det["label"],
+                                f"{det['confidence']:.4f}",
+                                det["cx"],
+                                det["cy"],
+                                det["x1"],
+                                det["y1"],
+                                det["x2"],
+                                det["y2"],
+                                int(det["label"] in DEFECT_CLASSES),
+                                best_id,
+                                "FINALE" if is_final else "LIVE",
+                                track["final_label"] or "",
+                                (
+                                    f"{track['final_confidence']:.4f}"
+                                    if track["final_confidence"] is not None
+                                    else ""
+                                ),
+                            ]
+                        )
+                        saved_rows += 1
+
+                # Pulisce tracce vecchie.
+                stale_ids = [
+                    track_id
+                    for track_id, track in tracks.items()
+                    if frame_number - track["last_frame"] > TRACK_MAX_MISSED_FRAMES
+                ]
+                for track_id in stale_ids:
+                    del tracks[track_id]
+
+                cv2.line(
+                    frame,
+                    (deadline_x, roi_y1),
+                    (deadline_x, roi_y2),
+                    (255, 0, 255),
+                    2,
+                )
+                cv2.putText(
+                    frame,
+                    "DEADLINE / RESPONSO",
+                    (max(5, deadline_x - 85), min(frame_height - 10, roi_y2 + 22)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.50,
+                    (255, 0, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+
+                if recent_final is not None and frame_number <= recent_final_until:
+                    final_id, final_label, final_conf = recent_final
+                    final_color = CLASS_COLORS.get(final_label, (255, 255, 255))
+                    cv2.putText(
+                        frame,
+                        f"RESPONSO FINALE -> ID {final_id}: {final_label.upper()} ({final_conf:.2f})",
+                        (15, max(55, roi_y1 + 28)),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.75,
+                        final_color,
+                        2,
+                        cv2.LINE_AA,
+                    )
 
                 cv2.putText(
                     frame,
@@ -635,6 +785,7 @@ def main() -> None:
         roi_right,
         roi_top,
         roi_bottom,
+        deadline_ratio,
     ) = selected
 
     try:
@@ -646,6 +797,7 @@ def main() -> None:
             roi_right=roi_right,
             roi_top=roi_top,
             roi_bottom=roi_bottom,
+            deadline_ratio=deadline_ratio,
         )
     except Exception as exc:
         print(f"Errore: {exc}")
