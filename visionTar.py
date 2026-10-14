@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 0.6
+Versione 0.7
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -55,7 +55,7 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
 
     root = tk.Tk()
     root.title("visionTar - Selezione input")
-    root.geometry("820x560")
+    root.geometry("820x620")
     root.resizable(False, False)
 
     video_var = tk.StringVar()
@@ -65,6 +65,41 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
     roi_right_var = tk.DoubleVar(value=ROI_RIGHT_RATIO * 100)
     roi_top_var = tk.DoubleVar(value=ROI_TOP_RATIO * 100)
     roi_bottom_var = tk.DoubleVar(value=ROI_BOTTOM_RATIO * 100)
+    roi_reference_var = tk.StringVar()
+    video_size = {"width": None, "height": None}
+
+    def update_roi_reference(*_args) -> None:
+        left = roi_left_var.get()
+        right = roi_right_var.get()
+        top = roi_top_var.get()
+        bottom = roi_bottom_var.get()
+
+        x1_pct = left
+        x2_pct = 100.0 - right
+        y1_pct = top
+        y2_pct = 100.0 - bottom
+
+        width = video_size["width"]
+        height = video_size["height"]
+
+        if width and height:
+            x1_px = int(width * x1_pct / 100.0)
+            x2_px = int(width * x2_pct / 100.0)
+            y1_px = int(height * y1_pct / 100.0)
+            y2_px = int(height * y2_pct / 100.0)
+            roi_reference_var.set(
+                f"BOX ROI: X {x1_pct:.0f}% -> {x2_pct:.0f}%  "
+                f"({x1_px} -> {x2_px} px) | "
+                f"Y {y1_pct:.0f}% -> {y2_pct:.0f}%  "
+                f"({y1_px} -> {y2_px} px) | "
+                f"Dimensione video: {width}x{height}"
+            )
+        else:
+            roi_reference_var.set(
+                f"BOX ROI: X {x1_pct:.0f}% -> {x2_pct:.0f}% | "
+                f"Y {y1_pct:.0f}% -> {y2_pct:.0f}% "
+                "(seleziona il video per vedere anche i pixel)"
+            )
 
     default_model = Path.cwd() / "yolo11n.pt"
     if default_model.exists():
@@ -80,6 +115,17 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
         )
         if filename:
             video_var.set(filename)
+
+            capture = cv2.VideoCapture(filename)
+            if capture.isOpened():
+                video_size["width"] = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+                video_size["height"] = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            else:
+                video_size["width"] = None
+                video_size["height"] = None
+            capture.release()
+
+            update_roi_reference()
             root.lift()
             root.focus_force()
 
@@ -249,9 +295,21 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float] | Non
             variable=variable,
             length=560,
             showvalue=True,
+            command=update_roi_reference,
         ).grid(row=row_index, column=1, sticky="ew", padx=(8, 0))
 
     roi_frame.grid_columnconfigure(1, weight=1)
+
+    tk.Label(
+        roi_frame,
+        textvariable=roi_reference_var,
+        anchor="w",
+        justify="left",
+        font=("Segoe UI", 9, "bold"),
+        wraplength=740,
+    ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(10, 0))
+
+    update_roi_reference()
 
     tk.Label(
         container,
