@@ -235,6 +235,15 @@ def choose_inputs() -> tuple[Path, Path, bool] | None:
     )
 
 
+CLASS_COLORS = {
+    "buono": (0, 255, 0),      # verde
+    "cotto": (0, 0, 255),      # rosso
+    "poco": (255, 0, 0),       # blu
+    "blob": (0, 255, 255),     # giallo
+    "rotto": (255, 255, 255),  # bianco
+}
+
+
 def draw_detection(
     frame,
     label: str,
@@ -249,7 +258,7 @@ def draw_detection(
 ) -> None:
     """Disegna bounding box, baricentro e informazioni della detection."""
 
-    color = (0, 0, 255) if is_defect else (0, 255, 0)
+    color = CLASS_COLORS.get(label, (0, 0, 255) if is_defect else (0, 255, 0))
 
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
     cv2.circle(frame, (cx, cy), 5, color, -1)
