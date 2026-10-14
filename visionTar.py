@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 0.7
+Versione 0.8
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -429,6 +429,15 @@ def process_video(
     frame_number = 0
     saved_rows = 0
 
+    window_name = "visionTar - Q o ESC per terminare"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+    # Slider LIVE: modificano realmente la ROI durante la riproduzione.
+    cv2.createTrackbar("Sinistra %", window_name, int(roi_left * 100), 45, lambda _v: None)
+    cv2.createTrackbar("Destra %", window_name, int(roi_right * 100), 45, lambda _v: None)
+    cv2.createTrackbar("Alto %", window_name, int(roi_top * 100), 45, lambda _v: None)
+    cv2.createTrackbar("Basso %", window_name, int(roi_bottom * 100), 45, lambda _v: None)
+
     try:
         with output_path.open(
             mode="w",
@@ -461,10 +470,25 @@ def process_video(
                 frame_number += 1
 
                 frame_height, frame_width = frame.shape[:2]
-                roi_x1 = int(frame_width * roi_left)
-                roi_x2 = int(frame_width * (1.0 - roi_right))
-                roi_y1 = int(frame_height * roi_top)
-                roi_y2 = int(frame_height * (1.0 - roi_bottom))
+
+                # Legge gli slider ad ogni frame: la ROI cambia in tempo reale.
+                live_left = cv2.getTrackbarPos("Sinistra %", window_name) / 100.0
+                live_right = cv2.getTrackbarPos("Destra %", window_name) / 100.0
+                live_top = cv2.getTrackbarPos("Alto %", window_name) / 100.0
+                live_bottom = cv2.getTrackbarPos("Basso %", window_name) / 100.0
+
+                # Evita ROI invalide anche durante la regolazione live.
+                if live_left + live_right >= 0.90:
+                    live_right = max(0.0, 0.89 - live_left)
+                    cv2.setTrackbarPos("Destra %", window_name, int(live_right * 100))
+                if live_top + live_bottom >= 0.90:
+                    live_bottom = max(0.0, 0.89 - live_top)
+                    cv2.setTrackbarPos("Basso %", window_name, int(live_bottom * 100))
+
+                roi_x1 = int(frame_width * live_left)
+                roi_x2 = int(frame_width * (1.0 - live_right))
+                roi_y1 = int(frame_height * live_top)
+                roi_y2 = int(frame_height * (1.0 - live_bottom))
 
                 # NMS agnostica rispetto alla classe: se due box di classi
                 # diverse descrivono lo stesso oggetto, resta quella piu forte.
@@ -484,7 +508,13 @@ def process_video(
                 )
                 cv2.putText(
                     frame,
-                    "AREA DI ISPEZIONE",
+                    (
+                        f"AREA DI ISPEZIONE | "
+                        f"L {int(live_left * 100)}%  "
+                        f"R {int(live_right * 100)}%  "
+                        f"A {int(live_top * 100)}%  "
+                        f"B {int(live_bottom * 100)}%"
+                    ),
                     (roi_x1 + 5, max(20, roi_y1 - 8)),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.50,
@@ -559,10 +589,7 @@ def process_video(
                     cv2.LINE_AA,
                 )
 
-                cv2.imshow(
-                    "visionTar - Q o ESC per terminare",
-                    frame,
-                )
+                cv2.imshow(window_name, frame)
 
                 key = cv2.waitKey(1) & 0xFF
 
