@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 1.3
+Versione 1.4
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -51,7 +51,7 @@ ROI_RIGHT_RATIO = 0.08
 ROI_TOP_RATIO = 0.20
 ROI_BOTTOM_RATIO = 0.20
 DEADLINE_X_RATIO = 0.50
-TRACK_MAX_MISSED_FRAMES = 8
+TRACK_MAX_MISSED_FRAMES = 14
 TRACK_OBSERVATION_WINDOW = 12
 TRACK_MIN_FINAL_OBSERVATIONS = 4
 TRACK_MIN_VOTE_SHARE = 0.55
@@ -64,6 +64,8 @@ SENSITIVE_MIN_AVG_CONFIDENCE = 0.55
 TRACK_MIN_MATCH_SCORE = 0.18
 TRACK_MAX_JUMP_RATIO = 0.06
 TRACK_MIN_CROSSING_DELTA = 4
+TRACK_DEADLINE_RESCUE_RATIO = 0.08
+COLOR_INNER_CROP_RATIO = 0.15
 
 
 def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float, float] | None:
@@ -414,6 +416,132 @@ def box_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float
     return (inter_area / union) if union > 0 else 0.0
 
 
+def extract_color_features(frame, x1: int, y1: int, x2: int, y2: int) -> dict[str, float]:
+    """Estrae descrittori colore robusti dalla parte interna della box.
+
+    I pixel chiaramente blu vengono esclusi quando possibile per ridurre
+    l'influenza del nastro trasportatore. Per ora questi valori sono diagnostici:
+    vengono registrati nel CSV ma non modificano ancora il responso finale.
+    """
+    height, width = frame.shape[:2]
+    box_w = max(1, x2 - x1)
+    box_h = max(1, y2 - y1)
+
+    ix1 = max(0, min(width - 1, int(x1 + box_w * COLOR_INNER_CROP_RATIO)))
+    ix2 = max(ix1 + 1, min(width, int(x2 - box_w * COLOR_INNER_CROP_RATIO)))
+    iy1 = max(0, min(height - 1, int(y1 + box_h * COLOR_INNER_CROP_RATIO)))
+    iy2 = max(iy1 + 1, min(height, int(y2 - box_h * COLOR_INNER_CROP_RATIO)))
+
+    crop = frame[iy1:iy2, ix1:ix2]
+    if crop.size == 0:
+        return {"h": 0.0, "s": 0.0, "v": 0.0, "lab_l": 0.0, "lab_a": 0.0, "lab_b": 0.0}
+
+    b, g, r = cv2.split(crop)
+    non_blue_mask = ~((b.astype("float32") > g.astype("float32") * 1.15) & (b.astype("float32") > r.astype("float32") * 1.15))
+
+    pixels = crop[non_blue_mask]
+    if pixels.size < 30:
+        pixels = crop.reshape(-1, 3)
+
+    pixels_img = pixels.reshape(-1, 1, 3)
+    hsv = cv2.cvtColor(pixels_img, cv2.COLOR_BGR2HSV).reshape(-1, 3)
+    lab = cv2.cvtColor(pixels_img, cv2.COLOR_BGR2LAB).reshape(-1, 3)
+
+    return {
+        "h": float(sorted(hsv[:, 0])[len(hsv) // 2]),
+        "s": float(sorted(hsv[:, 1])[len(hsv) // 2]),
+        "v": float(sorted(hsv[:, 2])[len(hsv) // 2]),
+        "lab_l": float(sorted(lab[:, 0])[len(lab) // 2]),
+        "lab_a": float(sorted(lab[:, 1])[len(lab) // 2]),
+        "lab_b": float(sorted(lab[:, 2])[len(lab) // 2]),
+    }
+
+
+def calculate_final_verdict(observations) -> dict[str, float | str]:
+    """Calcola il responso finale a due stadi sulle osservazioni del track."""
+    if len(observations) < TRACK_MIN_FINAL_OBSERVATIONS:
+        return {
+            "label": "incerto",
+            "confidence": 0.0,
+            "state": "INCERTO",
+            "defect_share": 0.0,
+            "class_share": 0.0,
+            "threshold": 0.0,
+        }
+
+    weighted_scores = defaultdict(float)
+    confidences = defaultdict(list)
+
+    for index, obs in enumerate(observations):
+        obs_label = obs["label"]
+        obs_conf = obs["confidence"]
+        recency_weight = 0.70 + (0.30 * (index + 1) / len(observations))
+        weighted_scores[obs_label] += obs_conf * recency_weight
+        confidences[obs_label].append(obs_conf)
+
+    good_score = weighted_scores.get("buono", 0.0)
+    defect_score = sum(weighted_scores.get(label, 0.0) for label in DEFECT_CLASSES)
+    binary_total = good_score + defect_score
+    defect_share = defect_score / binary_total if binary_total > 0 else 0.0
+
+    defect_ranked = sorted(
+        ((label, weighted_scores.get(label, 0.0)) for label in DEFECT_CLASSES),
+        key=lambda item: item[1],
+        reverse=True,
+    )
+    candidate_label, top_defect_score = defect_ranked[0]
+    class_share = top_defect_score / defect_score if defect_score > 0 else 0.0
+
+    candidate_confidences = confidences[candidate_label]
+    candidate_observations = len(candidate_confidences)
+    candidate_avg_confidence = (
+        sum(candidate_confidences) / candidate_observations
+        if candidate_observations > 0
+        else 0.0
+    )
+
+    threshold = DEFECT_BINARY_THRESHOLD
+    if (
+        candidate_label in SENSITIVE_DEFECT_CLASSES
+        and candidate_observations >= SENSITIVE_MIN_OBSERVATIONS
+        and candidate_avg_confidence >= SENSITIVE_MIN_AVG_CONFIDENCE
+    ):
+        threshold = DEFECT_BINARY_THRESHOLD_SENSITIVE
+
+    if defect_share >= threshold and defect_score > 0:
+        if class_share < DEFECT_CLASS_MIN_SHARE:
+            return {
+                "label": "incerto",
+                "confidence": candidate_avg_confidence,
+                "state": "INCERTO",
+                "defect_share": defect_share,
+                "class_share": class_share,
+                "threshold": threshold,
+            }
+        return {
+            "label": candidate_label,
+            "confidence": candidate_avg_confidence,
+            "state": "FINALE",
+            "defect_share": defect_share,
+            "class_share": class_share,
+            "threshold": threshold,
+        }
+
+    good_conf = (
+        sum(confidences["buono"]) / len(confidences["buono"])
+        if confidences["buono"]
+        else 0.0
+    )
+    return {
+        "label": "buono",
+        "confidence": good_conf,
+        "state": "FINALE",
+        "defect_share": defect_share,
+        "class_share": 0.0,
+        "threshold": threshold,
+    }
+
+
 def draw_detection(
     frame,
     label: str,
@@ -518,6 +646,12 @@ def process_video(
                     "quota_difetto",
                     "quota_classe_finale",
                     "soglia_difetto_usata",
+                    "h_median",
+                    "s_median",
+                    "v_median",
+                    "lab_l_median",
+                    "lab_a_median",
+                    "lab_b_median",
                 ]
             )
 
@@ -600,11 +734,13 @@ def process_video(
                         if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2):
                             continue
 
+                        color_features = extract_color_features(frame, x1, y1, x2, y2)
                         detections.append(
                             {
                                 "x1": x1, "y1": y1, "x2": x2, "y2": y2,
                                 "cx": cx, "cy": cy,
                                 "label": label, "confidence": confidence,
+                                "color": color_features,
                             }
                         )
 
@@ -715,7 +851,12 @@ def process_video(
                     # cosi la decisione non viene contaminata da classificazioni lontane.
                     if track["final_label"] is None:
                         track["observations"].append(
-                            (det["label"], det["confidence"], frame_number)
+                            {
+                                "label": det["label"],
+                                "confidence": det["confidence"],
+                                "frame": frame_number,
+                                "color": det["color"],
+                            }
                         )
 
                     crossed = (
@@ -725,104 +866,18 @@ def process_video(
                     )
 
                     if track["final_label"] is None and crossed:
-                        observations = list(track["observations"])
-
-                        if len(observations) < TRACK_MIN_FINAL_OBSERVATIONS:
-                            final_label = "incerto"
-                            final_conf = 0.0
-                            final_state = "INCERTO"
-                        else:
-                            weighted_scores = defaultdict(float)
-                            confidences = defaultdict(list)
-
-                            # Le osservazioni piu vicine alla deadline pesano di piu.
-                            for index, (obs_label, obs_conf, _obs_frame) in enumerate(observations):
-                                recency_weight = 0.70 + (0.30 * (index + 1) / len(observations))
-                                weighted_scores[obs_label] += obs_conf * recency_weight
-                                confidences[obs_label].append(obs_conf)
-
-                            # STADIO 1: BUONO vs DIFETTOSO.
-                            good_score = weighted_scores.get("buono", 0.0)
-                            defect_score = sum(
-                                weighted_scores.get(label, 0.0)
-                                for label in DEFECT_CLASSES
-                            )
-                            binary_total = good_score + defect_score
-                            defect_share = (
-                                defect_score / binary_total
-                                if binary_total > 0
-                                else 0.0
-                            )
-
-                            # STADIO 2: scegli il difetto prevalente e applica
-                            # una soglia piu sensibile solo a cotto/rotto.
-                            defect_ranked = sorted(
-                                (
-                                    (label, weighted_scores.get(label, 0.0))
-                                    for label in DEFECT_CLASSES
-                                ),
-                                key=lambda item: item[1],
-                                reverse=True,
-                            )
-                            candidate_label, top_defect_score = defect_ranked[0]
-                            defect_class_share = (
-                                top_defect_score / defect_score
-                                if defect_score > 0
-                                else 0.0
-                            )
-
-                            candidate_confidences = confidences[candidate_label]
-                            candidate_observations = len(candidate_confidences)
-                            candidate_avg_confidence = (
-                                sum(candidate_confidences) / candidate_observations
-                                if candidate_observations > 0
-                                else 0.0
-                            )
-
-                            defect_threshold = DEFECT_BINARY_THRESHOLD
-                            if (
-                                candidate_label in SENSITIVE_DEFECT_CLASSES
-                                and candidate_observations >= SENSITIVE_MIN_OBSERVATIONS
-                                and candidate_avg_confidence >= SENSITIVE_MIN_AVG_CONFIDENCE
-                            ):
-                                defect_threshold = DEFECT_BINARY_THRESHOLD_SENSITIVE
-
-                            if defect_share >= defect_threshold and defect_score > 0:
-                                final_label = candidate_label
-                                final_conf = candidate_avg_confidence
-
-                                if defect_class_share < DEFECT_CLASS_MIN_SHARE:
-                                    final_label = "incerto"
-                                    final_state = "INCERTO"
-                                else:
-                                    final_state = "FINALE"
-                            else:
-                                final_label = "buono"
-                                defect_class_share = 0.0
-                                final_conf = (
-                                    sum(confidences["buono"]) / len(confidences["buono"])
-                                    if confidences["buono"]
-                                    else 0.0
-                                )
-                                final_state = "FINALE"
+                        verdict = calculate_final_verdict(list(track["observations"]))
+                        final_label = str(verdict["label"])
+                        final_conf = float(verdict["confidence"])
+                        final_state = str(verdict["state"])
 
                         track["final_label"] = final_label
                         track["final_confidence"] = final_conf
                         track["final_frame"] = frame_number
                         track["final_state"] = final_state
-                        track["defect_share"] = (
-                            defect_share if len(observations) >= TRACK_MIN_FINAL_OBSERVATIONS else 0.0
-                        )
-                        track["final_class_share"] = (
-                            defect_class_share
-                            if len(observations) >= TRACK_MIN_FINAL_OBSERVATIONS
-                            else 0.0
-                        )
-                        track["defect_threshold_used"] = (
-                            defect_threshold
-                            if len(observations) >= TRACK_MIN_FINAL_OBSERVATIONS
-                            else 0.0
-                        )
+                        track["defect_share"] = float(verdict["defect_share"])
+                        track["final_class_share"] = float(verdict["class_share"])
+                        track["defect_threshold_used"] = float(verdict["threshold"])
                         recent_final = (best_id, final_label, final_conf)
                         recent_final_until = frame_number + 20
 
@@ -899,17 +954,60 @@ def process_video(
                                     if track["defect_threshold_used"] is not None
                                     else ""
                                 ),
+                                f"{det['color']['h']:.2f}",
+                                f"{det['color']['s']:.2f}",
+                                f"{det['color']['v']:.2f}",
+                                f"{det['color']['lab_l']:.2f}",
+                                f"{det['color']['lab_a']:.2f}",
+                                f"{det['color']['lab_b']:.2f}",
                             ]
                         )
                         saved_rows += 1
 
-                # Pulisce tracce vecchie.
+                # Pulisce tracce vecchie. Se un track si perde poco prima
+                # della deadline ma il moto previsto lo porta oltre la linea,
+                # recupera il responso invece di perderlo.
                 stale_ids = [
                     track_id
                     for track_id, track in tracks.items()
                     if frame_number - track["last_frame"] > TRACK_MAX_MISSED_FRAMES
                 ]
                 for track_id in stale_ids:
+                    track = tracks[track_id]
+
+                    if track["final_label"] is None:
+                        missed = frame_number - track["last_frame"]
+                        predicted_cx = track["cx"] + (track["vx"] * missed)
+                        rescue_zone = max(20.0, frame_width * TRACK_DEADLINE_RESCUE_RATIO)
+                        moving_toward_deadline = (
+                            (deadline_x - track["cx"]) * track["vx"] > 0
+                        )
+                        predicted_cross = (
+                            (track["cx"] - deadline_x)
+                            * (predicted_cx - deadline_x)
+                            <= 0
+                        )
+
+                        if (
+                            abs(track["cx"] - deadline_x) <= rescue_zone
+                            and moving_toward_deadline
+                            and predicted_cross
+                        ):
+                            verdict = calculate_final_verdict(list(track["observations"]))
+                            track["final_label"] = str(verdict["label"])
+                            track["final_confidence"] = float(verdict["confidence"])
+                            track["final_frame"] = frame_number
+                            track["final_state"] = "RECUPERO_" + str(verdict["state"])
+                            track["defect_share"] = float(verdict["defect_share"])
+                            track["final_class_share"] = float(verdict["class_share"])
+                            track["defect_threshold_used"] = float(verdict["threshold"])
+                            recent_final = (
+                                track_id,
+                                track["final_label"],
+                                track["final_confidence"],
+                            )
+                            recent_final_until = frame_number + 20
+
                     del tracks[track_id]
 
                 cv2.line(
