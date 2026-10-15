@@ -1437,9 +1437,9 @@ def process_video(
                             track["track_aspect"] = float(verdict["track_aspect"])
                             track["track_extent"] = float(verdict["track_extent"])
                             track["strong_shape_override"] = bool(verdict["strong_shape_override"])
-                        track["rotto_observations"] = int(verdict["rotto_observations"])
-                        track["rotto_avg_confidence"] = float(verdict["rotto_avg_confidence"])
-                        track["rotto_score_ratio"] = float(verdict["rotto_score_ratio"])
+                            track["rotto_observations"] = int(verdict["rotto_observations"])
+                            track["rotto_avg_confidence"] = float(verdict["rotto_avg_confidence"])
+                            track["rotto_score_ratio"] = float(verdict["rotto_score_ratio"])
                             recent_final = (
                                 track_id,
                                 track["final_label"],
