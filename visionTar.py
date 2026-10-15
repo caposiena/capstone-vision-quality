@@ -35,7 +35,7 @@ from tkinter import filedialog, messagebox
 import cv2
 from ultralytics import YOLO
 
-from acquisition_config import get_profile
+from acquisition_config import DEFAULT_TRAPDOOR_COUNT, get_profile
 
 
 DEFECT_CLASSES = {
@@ -985,6 +985,7 @@ def process_video(
     progress_callback: Callable[[int, int], None] | None = None,
     frame_callback: Callable[[int, int, Any], None] | None = None,
     model_instance: Any | None = None,
+    trapdoor_count: int = DEFAULT_TRAPDOOR_COUNT,
 ) -> Path:
     """Analizza il video e salva su CSV le coordinate delle detection."""
 
@@ -1076,6 +1077,19 @@ def process_video(
                     "y_norm",
                     "frame_finale",
                     "timestamp_s",
+                    "bbox_x1_px",
+                    "bbox_y1_px",
+                    "bbox_x2_px",
+                    "bbox_y2_px",
+                    "bbox_x1_norm",
+                    "bbox_y1_norm",
+                    "bbox_x2_norm",
+                    "bbox_y2_norm",
+                    "belt_y1_norm",
+                    "belt_y2_norm",
+                    "botola_da",
+                    "botola_a",
+                    "botole",
                 ]
             )
 
@@ -1149,6 +1163,25 @@ def process_video(
                         if video_fps > 0
                         else 0.0
                     )
+
+                    bx1, by1, bx2, by2 = track["bbox"]
+                    bx1 = max(0, min(frame_width - 1, int(bx1)))
+                    bx2 = max(bx1 + 1, min(frame_width, int(bx2)))
+                    by1 = max(0, min(frame_height - 1, int(by1)))
+                    by2 = max(by1 + 1, min(frame_height, int(by2)))
+
+                    belt_height = max(1, roi_y2 - roi_y1)
+                    belt_y1 = max(0.0, min(1.0, (by1 - roi_y1) / belt_height))
+                    belt_y2 = max(0.0, min(1.0, (by2 - roi_y1) / belt_height))
+                    if belt_y2 < belt_y1:
+                        belt_y1, belt_y2 = belt_y2, belt_y1
+
+                    gates = max(1, int(trapdoor_count))
+                    gate_from = min(gates, int(belt_y1 * gates) + 1)
+                    gate_to = min(gates, int(max(0.0, belt_y2 - 1e-9) * gates) + 1)
+                    gate_to = max(gate_from, gate_to)
+                    gate_list = ";".join(str(idx) for idx in range(gate_from, gate_to + 1))
+
                     defect_writer.writerow(
                         [
                             track_id,
@@ -1160,6 +1193,19 @@ def process_video(
                             f"{track['cy'] / max(1, frame_height):.6f}",
                             track["final_frame"],
                             f"{timestamp_s:.3f}",
+                            bx1,
+                            by1,
+                            bx2,
+                            by2,
+                            f"{bx1 / max(1, frame_width):.6f}",
+                            f"{by1 / max(1, frame_height):.6f}",
+                            f"{bx2 / max(1, frame_width):.6f}",
+                            f"{by2 / max(1, frame_height):.6f}",
+                            f"{belt_y1:.6f}",
+                            f"{belt_y2:.6f}",
+                            gate_from,
+                            gate_to,
+                            gate_list,
                         ]
                     )
                     defect_csv_file.flush()
