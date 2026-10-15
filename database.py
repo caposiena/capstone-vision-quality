@@ -53,6 +53,13 @@ def init_db(db_path: Path = DB_PATH) -> None:
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_defect_session ON defect_events(session_id)"
         )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_defect_session_track
+            ON defect_events(session_id, track_id)
+            WHERE track_id IS NOT NULL
+            """
+        )
 
 
 def create_session(
@@ -114,14 +121,14 @@ def add_defect_event(
     frame_finale: int | None = None,
     timestamp_s: float | None = None,
     db_path: Path = DB_PATH,
-) -> None:
+) -> bool:
     if defect_class not in DEFECT_CLASSES:
         raise ValueError(f"Classe difetto non valida: {defect_class}")
 
     with get_connection(db_path) as conn:
-        conn.execute(
+        cursor = conn.execute(
             """
-            INSERT INTO defect_events (
+            INSERT OR IGNORE INTO defect_events (
                 session_id,
                 track_id,
                 defect_class,
@@ -150,6 +157,7 @@ def add_defect_event(
                 datetime.now().isoformat(timespec="seconds"),
             ),
         )
+        return cursor.rowcount > 0
 
 
 def get_session(session_id: int, db_path: Path = DB_PATH) -> dict[str, Any] | None:
