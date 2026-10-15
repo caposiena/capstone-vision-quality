@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 0.9
+Versione 1.0
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import csv
 import math
-from collections import defaultdict
+from collections import defaultdict, deque
 from pathlib import Path
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -52,6 +52,9 @@ ROI_TOP_RATIO = 0.20
 ROI_BOTTOM_RATIO = 0.20
 DEADLINE_X_RATIO = 0.50
 TRACK_MAX_MISSED_FRAMES = 8
+TRACK_OBSERVATION_WINDOW = 12
+TRACK_MIN_FINAL_OBSERVATIONS = 4
+TRACK_MIN_VOTE_SHARE = 0.55
 
 
 def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float, float] | None:
@@ -381,6 +384,27 @@ CLASS_COLORS = {
 }
 
 
+def box_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    """Calcola Intersection over Union tra due bounding box."""
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+
+    inter_x1 = max(ax1, bx1)
+    inter_y1 = max(ay1, by1)
+    inter_x2 = min(ax2, bx2)
+    inter_y2 = min(ay2, by2)
+
+    inter_w = max(0, inter_x2 - inter_x1)
+    inter_h = max(0, inter_y2 - inter_y1)
+    inter_area = inter_w * inter_h
+
+    area_a = max(0, ax2 - ax1) * max(0, ay2 - ay1)
+    area_b = max(0, bx2 - bx1) * max(0, by2 - by1)
+    union = area_a + area_b - inter_area
+
+    return (inter_area / union) if union > 0 else 0.0
+
+
 def draw_detection(
     frame,
     label: str,
@@ -392,6 +416,7 @@ def draw_detection(
     cx: int,
     cy: int,
     is_defect: bool,
+    display_text: str | None = None,
 ) -> None:
     """Disegna bounding box, baricentro e informazioni della detection."""
 
@@ -400,7 +425,7 @@ def draw_detection(
     cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
     cv2.circle(frame, (cx, cy), 5, color, -1)
 
-    text = f"{label} | conf={confidence:.2f} | baricentro=({cx},{cy})"
+    text = display_text or f"{label} | conf={confidence:.2f} | baricentro=({cx},{cy})"
 
     cv2.putText(
         frame,
@@ -579,13 +604,27 @@ def process_video(
                     best_id = None
                     best_distance = max_distance
 
+                    best_match_score = -1.0
+                    det_bbox = (det["x1"], det["y1"], det["x2"], det["y2"])
+
                     for track_id in list(unmatched_track_ids):
                         track = tracks[track_id]
                         if frame_number - track["last_frame"] > TRACK_MAX_MISSED_FRAMES:
                             continue
+
                         distance = math.hypot(det["cx"] - track["cx"], det["cy"] - track["cy"])
-                        if distance < best_distance:
-                            best_distance = distance
+                        iou = box_iou(det_bbox, track["bbox"])
+
+                        # Associazione robusta: una detection deve essere vicina
+                        # oppure sovrapporsi alla box precedente.
+                        if distance > max_distance and iou < 0.05:
+                            continue
+
+                        distance_score = max(0.0, 1.0 - (distance / max_distance))
+                        match_score = (0.65 * iou) + (0.35 * distance_score)
+
+                        if match_score > best_match_score:
+                            best_match_score = match_score
                             best_id = track_id
 
                     if best_id is None:
@@ -595,12 +634,13 @@ def process_video(
                             "cx": det["cx"],
                             "cy": det["cy"],
                             "prev_cx": None,
+                            "bbox": (det["x1"], det["y1"], det["x2"], det["y2"]),
                             "last_frame": frame_number,
-                            "score": defaultdict(float),
-                            "count": defaultdict(int),
+                            "observations": deque(maxlen=TRACK_OBSERVATION_WINDOW),
                             "final_label": None,
                             "final_confidence": None,
                             "final_frame": None,
+                            "final_state": None,
                         }
                     else:
                         unmatched_track_ids.discard(best_id)
@@ -610,9 +650,15 @@ def process_video(
                     track["prev_cx"] = previous_cx
                     track["cx"] = det["cx"]
                     track["cy"] = det["cy"]
+                    track["bbox"] = det_bbox
                     track["last_frame"] = frame_number
-                    track["score"][det["label"]] += det["confidence"]
-                    track["count"][det["label"]] += 1
+
+                    # Conserva solo le osservazioni piu recenti prima della deadline,
+                    # cosi la decisione non viene contaminata da classificazioni lontane.
+                    if track["final_label"] is None:
+                        track["observations"].append(
+                            (det["label"], det["confidence"], frame_number)
+                        )
 
                     crossed = (
                         track["prev_cx"] is not None
@@ -622,13 +668,42 @@ def process_video(
                     on_deadline = abs(det["cx"] - deadline_x) <= 6
 
                     if track["final_label"] is None and (crossed or on_deadline):
-                        final_label = max(track["score"], key=track["score"].get)
-                        final_conf = (
-                            track["score"][final_label] / max(1, track["count"][final_label])
-                        )
+                        observations = list(track["observations"])
+
+                        if len(observations) < TRACK_MIN_FINAL_OBSERVATIONS:
+                            final_label = "incerto"
+                            final_conf = 0.0
+                            final_state = "INCERTO"
+                        else:
+                            weighted_scores = defaultdict(float)
+                            confidences = defaultdict(list)
+
+                            # Le osservazioni piu vicine alla deadline pesano di piu.
+                            for index, (obs_label, obs_conf, _obs_frame) in enumerate(observations):
+                                recency_weight = 0.70 + (0.30 * (index + 1) / len(observations))
+                                weighted_scores[obs_label] += obs_conf * recency_weight
+                                confidences[obs_label].append(obs_conf)
+
+                            ranked = sorted(
+                                weighted_scores.items(),
+                                key=lambda item: item[1],
+                                reverse=True,
+                            )
+                            final_label, top_score = ranked[0]
+                            total_score = sum(weighted_scores.values())
+                            vote_share = top_score / total_score if total_score > 0 else 0.0
+                            final_conf = sum(confidences[final_label]) / len(confidences[final_label])
+
+                            if vote_share < TRACK_MIN_VOTE_SHARE:
+                                final_label = "incerto"
+                                final_state = "INCERTO"
+                            else:
+                                final_state = "FINALE"
+
                         track["final_label"] = final_label
                         track["final_confidence"] = final_conf
                         track["final_frame"] = frame_number
+                        track["final_state"] = final_state
                         recent_final = (best_id, final_label, final_conf)
                         recent_final_until = frame_number + 20
 
@@ -639,15 +714,21 @@ def process_video(
                         else det["confidence"]
                     )
                     is_final = track["final_label"] is not None
+                    is_uncertain = display_label == "incerto"
                     is_defect = display_label in DEFECT_CLASSES
+                    display_text = (
+                        f"ID {best_id} | INCERTO"
+                        if is_uncertain
+                        else (
+                            f"ID {best_id} | FINALE {display_label} | conf={display_conf:.2f}"
+                            if is_final
+                            else f"ID {best_id} | LIVE {display_label} | conf={display_conf:.2f}"
+                        )
+                    )
 
                     draw_detection(
                         frame=frame,
-                        label=(
-                            f"ID {best_id} | FINALE {display_label}"
-                            if is_final
-                            else f"ID {best_id} | {display_label}"
-                        ),
+                        label=display_label,
                         confidence=display_conf,
                         x1=det["x1"],
                         y1=det["y1"],
@@ -656,6 +737,7 @@ def process_video(
                         cx=det["cx"],
                         cy=det["cy"],
                         is_defect=is_defect,
+                        display_text=display_text,
                     )
 
                     if test_mode or is_defect:
@@ -672,7 +754,11 @@ def process_video(
                                 det["y2"],
                                 int(det["label"] in DEFECT_CLASSES),
                                 best_id,
-                                "FINALE" if is_final else "LIVE",
+                                (
+                                    track["final_state"]
+                                    if is_final
+                                    else "LIVE"
+                                ),
                                 track["final_label"] or "",
                                 (
                                     f"{track['final_confidence']:.4f}"
@@ -712,10 +798,14 @@ def process_video(
 
                 if recent_final is not None and frame_number <= recent_final_until:
                     final_id, final_label, final_conf = recent_final
-                    final_color = CLASS_COLORS.get(final_label, (255, 255, 255))
+                    final_color = CLASS_COLORS.get(final_label, (128, 128, 128))
                     cv2.putText(
                         frame,
-                        f"RESPONSO FINALE -> ID {final_id}: {final_label.upper()} ({final_conf:.2f})",
+                        (
+                            f"RESPONSO -> ID {final_id}: INCERTO"
+                            if final_label == "incerto"
+                            else f"RESPONSO FINALE -> ID {final_id}: {final_label.upper()} ({final_conf:.2f})"
+                        ),
                         (15, max(55, roi_y1 + 28)),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.75,
