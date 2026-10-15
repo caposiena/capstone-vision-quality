@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 2.1
+Versione 2.2
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -87,6 +87,11 @@ POCO_MAX_S = 105.0
 COTTO_COLOR_SUPPORTED_THRESHOLD = 0.24
 POCO_COLOR_SUPPORTED_THRESHOLD = 0.32
 POCO_COLOR_MIN_OBSERVATIONS = 2
+
+# Conferma finale di luminosita per "poco".
+# Calibrazione sperimentale derivata dal confronto visivo dei 9 track "poco"
+# del video 2: i 5 casi realmente poco cotti mostrano Lab L >= 208.
+POCO_FINAL_MIN_LAB_L = 208.0
 
 # Supporto geometrico prudenziale per la classe rotto.
 # Le soglie sono iniziali e verranno validate sul benchmark manuale del video 2.
@@ -777,6 +782,38 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "track_aspect": track_aspect,
             "track_extent": track_extent,
             "strong_shape_override": True,
+            "rotto_observations": rotto_observations,
+            "rotto_avg_confidence": rotto_avg_confidence,
+            "rotto_score_ratio": rotto_score_ratio,
+        }
+
+    # Per "poco" il voto YOLO deve essere confermato anche dalla luminosita.
+    # Se il tarallo non e abbastanza chiaro, il responso viene ricondotto a
+    # "buono" invece di scartarlo sulla sola evidenza del detector.
+    if candidate_label == "poco" and track_lab_l < POCO_FINAL_MIN_LAB_L:
+        good_conf = (
+            sum(confidences["buono"]) / len(confidences["buono"])
+            if confidences["buono"]
+            else candidate_avg_confidence
+        )
+        return {
+            "label": "buono",
+            "confidence": good_conf,
+            "state": "FINALE",
+            "defect_share": defect_share,
+            "class_share": class_share,
+            "threshold": threshold,
+            "color_support": "poco_non_confermato",
+            "track_v": track_v,
+            "track_s": track_s,
+            "track_lab_l": track_lab_l,
+            "shape_support": shape_support,
+            "shape_anomalies": shape_anomalies,
+            "track_circularity": track_circularity,
+            "track_solidity": track_solidity,
+            "track_aspect": track_aspect,
+            "track_extent": track_extent,
+            "strong_shape_override": strong_shape_override,
             "rotto_observations": rotto_observations,
             "rotto_avg_confidence": rotto_avg_confidence,
             "rotto_score_ratio": rotto_score_ratio,
