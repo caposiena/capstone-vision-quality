@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 1.1
+Versione 1.2
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -55,6 +55,8 @@ TRACK_MAX_MISSED_FRAMES = 8
 TRACK_OBSERVATION_WINDOW = 12
 TRACK_MIN_FINAL_OBSERVATIONS = 4
 TRACK_MIN_VOTE_SHARE = 0.55
+DEFECT_BINARY_THRESHOLD = 0.40
+DEFECT_CLASS_MIN_SHARE = 0.38
 TRACK_MIN_MATCH_SCORE = 0.18
 TRACK_MAX_JUMP_RATIO = 0.06
 TRACK_MIN_CROSSING_DELTA = 4
@@ -509,6 +511,8 @@ def process_video(
                     "stato",
                     "responso_finale",
                     "confidence_finale",
+                    "quota_difetto",
+                    "quota_classe_finale",
                 ]
             )
 
@@ -677,6 +681,8 @@ def process_video(
                             "final_confidence": None,
                             "final_frame": None,
                             "final_state": None,
+                            "defect_share": None,
+                            "final_class_share": None,
                         }
                     else:
                         unmatched_track_ids.discard(best_id)
@@ -729,26 +735,68 @@ def process_video(
                                 weighted_scores[obs_label] += obs_conf * recency_weight
                                 confidences[obs_label].append(obs_conf)
 
-                            ranked = sorted(
-                                weighted_scores.items(),
-                                key=lambda item: item[1],
-                                reverse=True,
+                            # STADIO 1: BUONO vs DIFETTOSO.
+                            good_score = weighted_scores.get("buono", 0.0)
+                            defect_score = sum(
+                                weighted_scores.get(label, 0.0)
+                                for label in DEFECT_CLASSES
                             )
-                            final_label, top_score = ranked[0]
-                            total_score = sum(weighted_scores.values())
-                            vote_share = top_score / total_score if total_score > 0 else 0.0
-                            final_conf = sum(confidences[final_label]) / len(confidences[final_label])
+                            binary_total = good_score + defect_score
+                            defect_share = (
+                                defect_score / binary_total
+                                if binary_total > 0
+                                else 0.0
+                            )
 
-                            if vote_share < TRACK_MIN_VOTE_SHARE:
-                                final_label = "incerto"
-                                final_state = "INCERTO"
+                            # STADIO 2: se difettoso, scegli quale difetto prevale.
+                            if defect_share >= DEFECT_BINARY_THRESHOLD and defect_score > 0:
+                                defect_ranked = sorted(
+                                    (
+                                        (label, weighted_scores.get(label, 0.0))
+                                        for label in DEFECT_CLASSES
+                                    ),
+                                    key=lambda item: item[1],
+                                    reverse=True,
+                                )
+                                final_label, top_defect_score = defect_ranked[0]
+                                defect_class_share = (
+                                    top_defect_score / defect_score
+                                    if defect_score > 0
+                                    else 0.0
+                                )
+                                final_conf = (
+                                    sum(confidences[final_label]) / len(confidences[final_label])
+                                    if confidences[final_label]
+                                    else 0.0
+                                )
+
+                                if defect_class_share < DEFECT_CLASS_MIN_SHARE:
+                                    final_label = "incerto"
+                                    final_state = "INCERTO"
+                                else:
+                                    final_state = "FINALE"
                             else:
+                                final_label = "buono"
+                                defect_class_share = 0.0
+                                final_conf = (
+                                    sum(confidences["buono"]) / len(confidences["buono"])
+                                    if confidences["buono"]
+                                    else 0.0
+                                )
                                 final_state = "FINALE"
 
                         track["final_label"] = final_label
                         track["final_confidence"] = final_conf
                         track["final_frame"] = frame_number
                         track["final_state"] = final_state
+                        track["defect_share"] = (
+                            defect_share if len(observations) >= TRACK_MIN_FINAL_OBSERVATIONS else 0.0
+                        )
+                        track["final_class_share"] = (
+                            defect_class_share
+                            if len(observations) >= TRACK_MIN_FINAL_OBSERVATIONS
+                            else 0.0
+                        )
                         recent_final = (best_id, final_label, final_conf)
                         recent_final_until = frame_number + 20
 
@@ -808,6 +856,16 @@ def process_video(
                                 (
                                     f"{track['final_confidence']:.4f}"
                                     if track["final_confidence"] is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{track['defect_share']:.4f}"
+                                    if track["defect_share"] is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{track['final_class_share']:.4f}"
+                                    if track["final_class_share"] is not None
                                     else ""
                                 ),
                             ]
