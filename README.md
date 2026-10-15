@@ -102,6 +102,6 @@ L'integrazione con encoder, sistema fisico di scarto, dispositivi edge e gestion
 
 Con la baseline V1 congelata è iniziata la parte applicativa. La dashboard gestisce già due profili di acquisizione validati sui video di prova, permette di calibrare ROI e deadline senza modificare il classificatore ed è predisposta per file video, videocamera USB e stream IP.
 
-La dashboard consente ora all'operatore di aprire una sessione indicando data di produzione, descrizione prodotto e lotto. I dati vengono registrati in SQLite e il riepilogo della sessione è predisposto per mostrare totale scarti e conteggi separati per `cotto`, `poco`, `blob` e `rotto`.
+La dashboard è stata focalizzata sull'uso con video registrati, coerente con il perimetro della consegna. L'operatore inserisce data di produzione, descrizione prodotto e lotto, seleziona il video di prova e può calibrare ROI e deadline. I risultati `*_scarti.csv` prodotti da `visionTar.py` possono essere importati nella sessione: il sistema aggiorna i conteggi per `cotto`, `poco`, `blob` e `rotto` e costruisce un report cumulativo per lotto e descrizione prodotto.
 
-Il prossimo gate è collegare direttamente gli eventi prodotti dall'inferenza live alla sessione attiva, in modo che i contatori si aggiornino automaticamente durante il controllo.
+Il report finale scaricabile è `report_lotti.csv`, con data, prodotto, lotto, numero di sessioni, totale scarti e dettaglio per tipologia. Il collegamento a videocamera live, encoder e attuatore resta documentato come sviluppo successivo.
