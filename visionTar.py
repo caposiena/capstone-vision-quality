@@ -1339,6 +1339,19 @@ def process_video(
                     (180, 180, 180),
                     1,
                 )
+
+                # Suddivisione trasversale del nastro nelle botole fisiche.
+                gates = max(1, int(trapdoor_count))
+                for gate_idx in range(1, gates):
+                    gate_y = roi_y1 + int((roi_y2 - roi_y1) * gate_idx / gates)
+                    cv2.line(
+                        frame,
+                        (roi_x1, gate_y),
+                        (roi_x2, gate_y),
+                        (120, 120, 120),
+                        1,
+                    )
+
                 cv2.putText(
                     frame,
                     (
