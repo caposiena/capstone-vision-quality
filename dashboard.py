@@ -288,7 +288,7 @@ with viewer_col:
         if uploaded is None:
             st.info("Carica un video di prova.")
         elif st.session_state.display_mode == "processed" and st.session_state.processed_video_bytes:
-            st.video(st.session_state.processed_video_bytes, width=420)
+            st.video(st.session_state.processed_video_bytes)
             if st.session_state.analysis_summary:
                 st.success(st.session_state.analysis_summary)
         elif frame_data is not None:
