@@ -28,6 +28,7 @@ import csv
 import math
 from collections import defaultdict, deque
 from pathlib import Path
+from typing import Callable
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -981,6 +982,7 @@ def process_video(
     deadline_ratio: float = DEADLINE_X_RATIO,
     show_window: bool = True,
     annotated_output_path: Path | None = None,
+    progress_callback: Callable[[int, int], None] | None = None,
 ) -> Path:
     """Analizza il video e salva su CSV le coordinate delle detection."""
 
@@ -1002,6 +1004,7 @@ def process_video(
     defect_suffix = "_scarti_test.csv" if test_mode else "_scarti.csv"
     defect_output_path = video_path.with_name(f"{video_path.stem}{defect_suffix}")
     video_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
+    total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
 
     frame_number = 0
     saved_rows = 0
@@ -1215,6 +1218,13 @@ def process_video(
                     break
 
                 frame_number += 1
+
+                if progress_callback is not None and (
+                    frame_number == 1
+                    or frame_number % 5 == 0
+                    or (total_frames > 0 and frame_number >= total_frames)
+                ):
+                    progress_callback(frame_number, total_frames)
 
                 frame_height, frame_width = frame.shape[:2]
 
@@ -1773,6 +1783,9 @@ def process_video(
     print(f"Responsi finali unici: {len(finalized_track_ids)}")
     print(f"File finali: {final_output_path}")
     print(f"Eventi scarto: {defect_output_path}")
+
+    if progress_callback is not None:
+        progress_callback(frame_number, total_frames)
 
     return output_path
 
