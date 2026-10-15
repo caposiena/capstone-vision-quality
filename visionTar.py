@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 1.5
+Versione 1.6
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -81,10 +81,11 @@ COLOR_INNER_CROP_RATIO = 0.15
 COTTO_MAX_V = 190.0
 COTTO_MAX_LAB_L = 168.0
 COTTO_MIN_S = 125.0
-POCO_MIN_V = 208.0
-POCO_MIN_LAB_L = 192.0
-POCO_MAX_S = 110.0
-COLOR_SUPPORTED_THRESHOLD = 0.24
+POCO_MIN_V = 212.0
+POCO_MIN_LAB_L = 198.0
+POCO_MAX_S = 105.0
+COTTO_COLOR_SUPPORTED_THRESHOLD = 0.24
+POCO_COLOR_SUPPORTED_THRESHOLD = 0.32
 
 
 def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float, float] | None:
@@ -590,7 +591,10 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
         threshold = DEFECT_BINARY_THRESHOLD_SENSITIVE
 
     if color_supports_candidate:
-        threshold = min(threshold, COLOR_SUPPORTED_THRESHOLD)
+        if candidate_label == "cotto":
+            threshold = min(threshold, COTTO_COLOR_SUPPORTED_THRESHOLD)
+        elif candidate_label == "poco":
+            threshold = min(threshold, POCO_COLOR_SUPPORTED_THRESHOLD)
 
     if defect_share >= threshold and defect_score > 0:
         if class_share < DEFECT_CLASS_MIN_SHARE:
