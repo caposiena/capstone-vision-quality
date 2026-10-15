@@ -1767,7 +1767,7 @@ def process_video(
 
                 if frame_callback is not None and (
                     frame_number == 1
-                    or frame_number % 2 == 0
+                    or frame_number % 3 == 0
                     or (total_frames > 0 and frame_number >= total_frames)
                 ):
                     frame_callback(frame_number, total_frames, frame.copy())
