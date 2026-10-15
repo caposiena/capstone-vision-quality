@@ -8,6 +8,7 @@ import cv2
 import streamlit as st
 
 from acquisition_config import DEFAULT_PROFILE_KEY, PROFILES
+from database import close_session, create_session, get_session, get_session_summary, init_db
 from video_source import open_stream, open_usb_camera, open_video_file
 
 
@@ -19,6 +20,8 @@ st.set_page_config(
 
 
 def init_state() -> None:
+    if "active_session_id" not in st.session_state:
+        st.session_state.active_session_id = None
     if "profile_key" not in st.session_state:
         st.session_state.profile_key = DEFAULT_PROFILE_KEY
     profile = PROFILES[st.session_state.profile_key]
@@ -134,6 +137,7 @@ def read_stream_frame(url: str):
         source.release()
 
 
+init_db()
 init_state()
 
 st.title("visionTar")
@@ -143,6 +147,22 @@ st.info(
     "Le regolazioni in questa pagina riguardano solo acquisizione, ROI e deadline. "
     "Le soglie di classificazione della baseline V1 restano congelate."
 )
+
+st.subheader("Dati produzione")
+
+meta_col1, meta_col2, meta_col3 = st.columns([0.22, 0.48, 0.30])
+with meta_col1:
+    production_date = st.date_input("Data produzione")
+with meta_col2:
+    product_description = st.text_input(
+        "Descrizione prodotto",
+        placeholder="Es. Taralli classici 250 g",
+    )
+with meta_col3:
+    lot_code = st.text_input(
+        "Lotto",
+        placeholder="Es. L251015A",
+    )
 
 left_col, preview_col = st.columns([0.36, 0.64], gap="large")
 
@@ -194,6 +214,41 @@ with left_col:
     direction_label = "destra → sinistra" if profile.direction == "rtl" else "sinistra → destra"
     st.caption(f"Direzione nastro del preset: {direction_label}")
 
+    st.subheader("Sessione di controllo")
+
+    if st.session_state.active_session_id is None:
+        can_start = bool(product_description.strip() and lot_code.strip())
+        if st.button(
+            "Avvia sessione",
+            type="primary",
+            use_container_width=True,
+            disabled=not can_start,
+        ):
+            st.session_state.active_session_id = create_session(
+                production_date=production_date,
+                product_description=product_description,
+                lot_code=lot_code,
+                profile_key=st.session_state.profile_key,
+                source_type=source_type,
+            )
+            st.rerun()
+
+        if not can_start:
+            st.caption("Inserisci descrizione prodotto e lotto per avviare la sessione.")
+    else:
+        session = get_session(st.session_state.active_session_id)
+        if session:
+            st.success(
+                f"Sessione #{session['id']} attiva - "
+                f"{session['product_description']} - lotto {session['lot_code']}"
+            )
+
+        if st.button("Chiudi sessione", use_container_width=True):
+            close_session(st.session_state.active_session_id)
+            st.session_state.last_closed_session_id = st.session_state.active_session_id
+            st.session_state.active_session_id = None
+            st.rerun()
+
 with preview_col:
     st.subheader("Anteprima acquisizione")
 
@@ -228,9 +283,33 @@ with preview_col:
         )
 
 st.divider()
+st.subheader("Contatore scarti")
+
+summary_session_id = st.session_state.active_session_id or st.session_state.get("last_closed_session_id")
+if summary_session_id is not None:
+    summary = get_session_summary(summary_session_id)
+    total_col, cotto_col, poco_col, blob_col, rotto_col = st.columns(5)
+    total_col.metric("Totale scarti", summary["totale_scarti"])
+    cotto_col.metric("Cotto", summary["cotto"])
+    poco_col.metric("Poco", summary["poco"])
+    blob_col.metric("Blob", summary["blob"])
+    rotto_col.metric("Rotto", summary["rotto"])
+
+    summary_session = get_session(summary_session_id)
+    if summary_session:
+        stato = "chiusa" if summary_session["ended_at"] else "attiva"
+        st.caption(
+            f"Sessione #{summary_session['id']} {stato} | "
+            f"{summary_session['production_date']} | "
+            f"{summary_session['product_description']} | "
+            f"lotto {summary_session['lot_code']}"
+        )
+else:
+    st.caption("Il contatore sarà disponibile dopo l'avvio della prima sessione.")
+
 st.subheader("Uscita verso il futuro sistema di scarto")
 st.write(
-    "Il sistema produrrà eventi solo per i pezzi difettosi (cotto, poco, blob, rotto). "
-    "Per ogni evento saranno disponibili classe, confidence, coordinate in pixel e normalizzate, "
+    "Vengono registrati solo i pezzi difettosi (cotto, poco, blob, rotto). "
+    "Per ogni evento sono previste classe, confidence, coordinate in pixel e normalizzate, "
     "frame e timestamp. Il collegamento fisico a encoder/attuatore resta separato dal Capstone."
 )
