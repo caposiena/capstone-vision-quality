@@ -761,6 +761,12 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
         "track_v": track_v,
         "track_s": track_s,
         "track_lab_l": track_lab_l,
+        "shape_support": shape_support,
+        "shape_anomalies": shape_anomalies,
+        "track_circularity": track_circularity,
+        "track_solidity": track_solidity,
+        "track_aspect": track_aspect,
+        "track_extent": track_extent,
     }
 
 
