@@ -50,7 +50,7 @@ ROI_LEFT_RATIO = 0.30
 ROI_RIGHT_RATIO = 0.12
 ROI_TOP_RATIO = 0.20
 ROI_BOTTOM_RATIO = 0.32
-DEADLINE_X_RATIO = 0.40
+DEADLINE_X_RATIO = 0.35
 
 DEFAULT_MODEL_PATH = Path(
     "C:/Users/Lello/Documents/GitHub/capstone-vision-quality/"
@@ -1100,7 +1100,9 @@ def process_video(
                 # La deadline deve restare ben dentro la ROI: servono alcuni
                 # frame dopo il passaggio della linea per osservare davvero
                 # l'attraversamento e non dipendere quasi solo dal rescue.
-                post_deadline_buffer = max(30, int(frame_width * 0.08))
+                # Buffer ridotto ma mantenuto: la deadline resta prima della
+                # zona con riflessi/luminosita potenzialmente contaminanti.
+                post_deadline_buffer = max(20, int(frame_width * 0.05))
                 min_deadline_x = roi_x1 + post_deadline_buffer
                 deadline_x = max(min_deadline_x, min(roi_x2 - 5, deadline_x))
 
