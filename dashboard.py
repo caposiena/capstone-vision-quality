@@ -341,9 +341,26 @@ with viewer_col:
                         )
 
                 def update_live_frame(current_frame: int, total_frames: int, frame) -> None:
-                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    st.session_state.last_live_frame = rgb
-                    live_image.image(rgb, channels="RGB", width=340)
+                    height, width = frame.shape[:2]
+                    target_width = 340
+                    if width > target_width:
+                        scale = target_width / width
+                        preview = cv2.resize(
+                            frame,
+                            (target_width, max(1, int(height * scale))),
+                            interpolation=cv2.INTER_AREA,
+                        )
+                    else:
+                        preview = frame
+
+                    ok, encoded = cv2.imencode(
+                        ".jpg",
+                        preview,
+                        [int(cv2.IMWRITE_JPEG_QUALITY), 72],
+                    )
+                    if ok:
+                        live_image.image(encoded.tobytes())
+
                     if total_frames > 0:
                         live_caption.caption(
                             f"YOLO al lavoro · frame {current_frame}/{total_frames}"
@@ -353,9 +370,7 @@ with viewer_col:
                             f"YOLO al lavoro · frame {current_frame}"
                         )
 
-                work_dir = Path(tempfile.mkdtemp(prefix="visiontar_run_"))
-                run_input = work_dir / "input.mp4"
-                run_input.write_bytes(Path(input_path).read_bytes())
+                run_input = Path(input_path)
 
                 try:
                     process_video(
