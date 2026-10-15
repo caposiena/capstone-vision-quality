@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 1.6
+Versione 1.7
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -86,6 +86,16 @@ POCO_MIN_LAB_L = 198.0
 POCO_MAX_S = 105.0
 COTTO_COLOR_SUPPORTED_THRESHOLD = 0.24
 POCO_COLOR_SUPPORTED_THRESHOLD = 0.32
+
+# Supporto geometrico prudenziale per la classe rotto.
+# Le soglie sono iniziali e verranno validate sul benchmark manuale del video 2.
+ROTTO_MAX_CIRCULARITY = 0.62
+ROTTO_MAX_SOLIDITY = 0.88
+ROTTO_MIN_ASPECT = 0.72
+ROTTO_MAX_ASPECT = 1.38
+ROTTO_MAX_EXTENT = 0.55
+ROTTO_MIN_ANOMALY_SIGNALS = 2
+ROTTO_SHAPE_SUPPORTED_THRESHOLD = 0.24
 
 
 def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float, float] | None:
@@ -501,6 +511,60 @@ def extract_color_features(frame, x1: int, y1: int, x2: int, y2: int) -> dict[st
     }
 
 
+def extract_shape_features(frame, x1: int, y1: int, x2: int, y2: int) -> dict[str, float]:
+    """Estrae indicatori geometrici semplici dalla sagoma sul nastro blu."""
+    height, width = frame.shape[:2]
+    x1 = max(0, min(width - 1, x1))
+    x2 = max(x1 + 1, min(width, x2))
+    y1 = max(0, min(height - 1, y1))
+    y2 = max(y1 + 1, min(height, y2))
+
+    crop = frame[y1:y2, x1:x2]
+    if crop.size == 0:
+        return {"circularity": 0.0, "solidity": 0.0, "aspect": 0.0, "extent": 0.0}
+
+    b, g, r = cv2.split(crop)
+    non_blue = (
+        (b.astype("float32") <= g.astype("float32") * 1.15)
+        | (b.astype("float32") <= r.astype("float32") * 1.15)
+    )
+    mask = (non_blue.astype("uint8") * 255)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    contours, _hierarchy = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    if not contours:
+        return {"circularity": 0.0, "solidity": 0.0, "aspect": 0.0, "extent": 0.0}
+
+    contour = max(contours, key=cv2.contourArea)
+    area = float(cv2.contourArea(contour))
+    perimeter = float(cv2.arcLength(contour, True))
+    bx, by, bw, bh = cv2.boundingRect(contour)
+    hull = cv2.convexHull(contour)
+    hull_area = float(cv2.contourArea(hull))
+
+    circularity = (
+        4.0 * math.pi * area / (perimeter * perimeter)
+        if perimeter > 0
+        else 0.0
+    )
+    solidity = area / hull_area if hull_area > 0 else 0.0
+    aspect = float(bw) / float(bh) if bh > 0 else 0.0
+    extent = area / float(bw * bh) if bw > 0 and bh > 0 else 0.0
+
+    return {
+        "circularity": circularity,
+        "solidity": solidity,
+        "aspect": aspect,
+        "extent": extent,
+    }
+
+
 def calculate_final_verdict(observations) -> dict[str, float | str]:
     """Calcola il responso finale a due stadi con supporto colore prudenziale."""
     if len(observations) < TRACK_MIN_FINAL_OBSERVATIONS:
@@ -515,6 +579,12 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "track_v": 0.0,
             "track_s": 0.0,
             "track_lab_l": 0.0,
+            "shape_support": "nessuno",
+            "shape_anomalies": 0,
+            "track_circularity": 0.0,
+            "track_solidity": 0.0,
+            "track_aspect": 0.0,
+            "track_extent": 0.0,
         }
 
     weighted_scores = defaultdict(float)
@@ -562,6 +632,32 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
     track_v = float(track_v_values[mid]) if track_v_values else 0.0
     track_lab_l = float(track_l_values[mid]) if track_l_values else 0.0
 
+    shape_circularity_values = sorted(
+        obs["shape"]["circularity"] for obs in observations if "shape" in obs
+    )
+    shape_solidity_values = sorted(
+        obs["shape"]["solidity"] for obs in observations if "shape" in obs
+    )
+    shape_aspect_values = sorted(
+        obs["shape"]["aspect"] for obs in observations if "shape" in obs
+    )
+    shape_extent_values = sorted(
+        obs["shape"]["extent"] for obs in observations if "shape" in obs
+    )
+    shape_mid = len(shape_circularity_values) // 2 if shape_circularity_values else 0
+    track_circularity = (
+        float(shape_circularity_values[shape_mid]) if shape_circularity_values else 0.0
+    )
+    track_solidity = (
+        float(shape_solidity_values[shape_mid]) if shape_solidity_values else 0.0
+    )
+    track_aspect = (
+        float(shape_aspect_values[shape_mid]) if shape_aspect_values else 0.0
+    )
+    track_extent = (
+        float(shape_extent_values[shape_mid]) if shape_extent_values else 0.0
+    )
+
     color_support = "nessuno"
     color_supports_candidate = False
 
@@ -596,6 +692,20 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
         elif candidate_label == "poco":
             threshold = min(threshold, POCO_COLOR_SUPPORTED_THRESHOLD)
 
+    shape_support = "nessuno"
+    shape_anomalies = 0
+    if candidate_label == "rotto":
+        shape_anomalies += int(track_circularity <= ROTTO_MAX_CIRCULARITY)
+        shape_anomalies += int(track_solidity <= ROTTO_MAX_SOLIDITY)
+        shape_anomalies += int(
+            track_aspect <= ROTTO_MIN_ASPECT or track_aspect >= ROTTO_MAX_ASPECT
+        )
+        shape_anomalies += int(track_extent <= ROTTO_MAX_EXTENT)
+
+        if shape_anomalies >= ROTTO_MIN_ANOMALY_SIGNALS:
+            shape_support = "rotto"
+            threshold = min(threshold, ROTTO_SHAPE_SUPPORTED_THRESHOLD)
+
     if defect_share >= threshold and defect_score > 0:
         if class_share < DEFECT_CLASS_MIN_SHARE:
             return {
@@ -609,6 +719,12 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
                 "track_v": track_v,
                 "track_s": track_s,
                 "track_lab_l": track_lab_l,
+                "shape_support": shape_support,
+                "shape_anomalies": shape_anomalies,
+                "track_circularity": track_circularity,
+                "track_solidity": track_solidity,
+                "track_aspect": track_aspect,
+                "track_extent": track_extent,
             }
         return {
             "label": candidate_label,
@@ -621,6 +737,12 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "track_v": track_v,
             "track_s": track_s,
             "track_lab_l": track_lab_l,
+            "shape_support": shape_support,
+            "shape_anomalies": shape_anomalies,
+            "track_circularity": track_circularity,
+            "track_solidity": track_solidity,
+            "track_aspect": track_aspect,
+            "track_extent": track_extent,
         }
 
     good_conf = (
@@ -756,6 +878,16 @@ def process_video(
                     "track_v_median",
                     "track_s_median",
                     "track_lab_l_median",
+                    "circularity",
+                    "solidity",
+                    "aspect_ratio",
+                    "extent",
+                    "supporto_forma",
+                    "anomalie_forma",
+                    "track_circularity_median",
+                    "track_solidity_median",
+                    "track_aspect_median",
+                    "track_extent_median",
                 ]
             )
 
@@ -845,6 +977,7 @@ def process_video(
                                 "cx": cx, "cy": cy,
                                 "label": label, "confidence": confidence,
                                 "color": color_features,
+                                "shape": extract_shape_features(frame, x1, y1, x2, y2),
                             }
                         )
 
@@ -933,6 +1066,12 @@ def process_video(
                             "track_v": None,
                             "track_s": None,
                             "track_lab_l": None,
+                            "shape_support": None,
+                            "shape_anomalies": None,
+                            "track_circularity": None,
+                            "track_solidity": None,
+                            "track_aspect": None,
+                            "track_extent": None,
                         }
                     else:
                         unmatched_track_ids.discard(best_id)
@@ -964,6 +1103,7 @@ def process_video(
                                 "confidence": det["confidence"],
                                 "frame": frame_number,
                                 "color": det["color"],
+                                "shape": det["shape"],
                             }
                         )
 
@@ -990,6 +1130,12 @@ def process_video(
                         track["track_v"] = float(verdict["track_v"])
                         track["track_s"] = float(verdict["track_s"])
                         track["track_lab_l"] = float(verdict["track_lab_l"])
+                        track["shape_support"] = str(verdict["shape_support"])
+                        track["shape_anomalies"] = int(verdict["shape_anomalies"])
+                        track["track_circularity"] = float(verdict["track_circularity"])
+                        track["track_solidity"] = float(verdict["track_solidity"])
+                        track["track_aspect"] = float(verdict["track_aspect"])
+                        track["track_extent"] = float(verdict["track_extent"])
                         recent_final = (best_id, final_label, final_conf)
                         recent_final_until = frame_number + 20
 
@@ -1088,6 +1234,36 @@ def process_video(
                                     if track["track_lab_l"] is not None
                                     else ""
                                 ),
+                                f"{det['shape']['circularity']:.4f}",
+                                f"{det['shape']['solidity']:.4f}",
+                                f"{det['shape']['aspect']:.4f}",
+                                f"{det['shape']['extent']:.4f}",
+                                track["shape_support"] or "",
+                                (
+                                    track["shape_anomalies"]
+                                    if track["shape_anomalies"] is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{track['track_circularity']:.4f}"
+                                    if track["track_circularity"] is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{track['track_solidity']:.4f}"
+                                    if track["track_solidity"] is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{track['track_aspect']:.4f}"
+                                    if track["track_aspect"] is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{track['track_extent']:.4f}"
+                                    if track["track_extent"] is not None
+                                    else ""
+                                ),
                             ]
                         )
                         saved_rows += 1
@@ -1133,6 +1309,12 @@ def process_video(
                             track["track_v"] = float(verdict["track_v"])
                             track["track_s"] = float(verdict["track_s"])
                             track["track_lab_l"] = float(verdict["track_lab_l"])
+                        track["shape_support"] = str(verdict["shape_support"])
+                        track["shape_anomalies"] = int(verdict["shape_anomalies"])
+                        track["track_circularity"] = float(verdict["track_circularity"])
+                        track["track_solidity"] = float(verdict["track_solidity"])
+                        track["track_aspect"] = float(verdict["track_aspect"])
+                        track["track_extent"] = float(verdict["track_extent"])
                             recent_final = (
                                 track_id,
                                 track["final_label"],
