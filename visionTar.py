@@ -46,11 +46,11 @@ CONFIDENCE_THRESHOLD = 0.35
 
 # Area centrale di ispezione. Le detection con baricentro fuori da questa
 # regione vengono ignorate per ridurre falsi positivi ai bordi del frame.
-ROI_LEFT_RATIO = 0.30
-ROI_RIGHT_RATIO = 0.12
-ROI_TOP_RATIO = 0.20
-ROI_BOTTOM_RATIO = 0.25
-DEADLINE_X_RATIO = 0.35
+ROI_LEFT_RATIO = 0.12
+ROI_RIGHT_RATIO = 0.30
+ROI_TOP_RATIO = 0.18
+ROI_BOTTOM_RATIO = 0.24
+DEADLINE_X_RATIO = 0.65
 
 DEFAULT_MODEL_PATH = Path(
     "C:/Users/Lello/Documents/GitHub/capstone-vision-quality/"
