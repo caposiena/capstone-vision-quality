@@ -20,7 +20,7 @@ from database import (
     get_session_summary,
     init_db,
 )
-from video_source import open_video_file
+from video_source import open_usb_camera, open_video_file
 from visionTar import DEFAULT_MODEL_PATH, process_video
 
 
@@ -186,6 +186,8 @@ if "machine_events_bytes" not in st.session_state:
     st.session_state.machine_events_bytes = None
 if "machine_events_filename" not in st.session_state:
     st.session_state.machine_events_filename = None
+if "camera_preview_frame" not in st.session_state:
+    st.session_state.camera_preview_frame = None
 
 st.title("visionTar")
 st.caption("Controllo qualità visivo - baseline V1")
@@ -212,12 +214,50 @@ settings_col, viewer_col = st.columns([0.34, 0.66], gap="large")
 with settings_col:
     st.markdown("#### Impostazioni video")
 
-    uploaded = st.file_uploader(
-        "Seleziona video di prova",
-        type=["mp4", "avi", "mov", "mkv"],
+    source_mode = st.radio(
+        "Sorgente input",
+        ["Video registrato", "Videocamera USB"],
+        horizontal=True,
     )
 
+    uploaded = None
+    camera_index = 0
     input_path = None
+
+    if source_mode == "Video registrato":
+        uploaded = st.file_uploader(
+            "Seleziona video di prova",
+            type=["mp4", "avi", "mov", "mkv"],
+        )
+    else:
+        camera_index = int(
+            st.number_input(
+                "Indice videocamera",
+                min_value=0,
+                max_value=10,
+                value=0,
+                step=1,
+            )
+        )
+        if st.button("Acquisisci fotogramma camera", use_container_width=True):
+            try:
+                camera = open_usb_camera(camera_index)
+                try:
+                    ok, camera_frame = camera.read()
+                    if not ok:
+                        raise RuntimeError("La videocamera non ha restituito un fotogramma.")
+                    st.session_state.camera_preview_frame = camera_frame
+                    st.session_state.display_mode = "calibration"
+                finally:
+                    camera.release()
+            except Exception as exc:
+                st.error(f"Videocamera non disponibile: {exc}")
+
+        st.caption(
+            "La modalità videocamera è predisposta per il collegamento hardware. "
+            "La consegna Capstone viene validata sui video registrati."
+        )
+
     if uploaded is not None:
         current_signature = f"{uploaded.name}:{uploaded.size}"
         if current_signature != st.session_state.last_video_signature:
@@ -276,11 +316,15 @@ with viewer_col:
     st.markdown("#### Schermata video")
 
     frame_data = None
-    if uploaded is not None:
+    if source_mode == "Video registrato" and uploaded is not None:
         try:
             frame_data = read_uploaded_video_frame(uploaded)
         except Exception as exc:
             st.error(f"Impossibile leggere il video: {exc}")
+    elif source_mode == "Videocamera USB" and st.session_state.camera_preview_frame is not None:
+        camera_frame = st.session_state.camera_preview_frame
+        h, w = camera_frame.shape[:2]
+        frame_data = (camera_frame, w, h, 0.0)
 
     control_col1, control_col2, control_spacer = st.columns([0.22, 0.30, 0.48])
 
@@ -291,7 +335,8 @@ with viewer_col:
 
     with control_col2:
         can_start = bool(
-            product_description.strip()
+            source_mode == "Video registrato"
+            and product_description.strip()
             and lot_code.strip()
             and input_path is not None
             and not invalid_roi
