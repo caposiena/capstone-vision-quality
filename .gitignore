@@ -15,3 +15,6 @@ runs/
 *_detections_test.csv
 *_finali_test.csv
 *_finali.csv
+
+*_scarti_test.csv
+*_scarti.csv
