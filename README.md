@@ -105,3 +105,14 @@ Con la baseline V1 congelata è iniziata la parte applicativa. La dashboard gest
 La dashboard è focalizzata sull'uso con video registrati, coerente con il perimetro della consegna. L'operatore inserisce data di produzione, descrizione prodotto e lotto, seleziona il video di prova e calibra ROI e deadline sul primo fotogramma. Dalla stessa schermata può poi avviare l'analisi YOLO: `visionTar.py` viene eseguito in modalità headless, produce il video annotato e registra automaticamente nella sessione i difetti finalizzati `cotto`, `poco`, `blob` e `rotto`.
 
 Il report finale scaricabile è `report_lotti.csv`, con data, prodotto, lotto, numero di sessioni, totale scarti e dettaglio per tipologia. Il collegamento a videocamera live, encoder e attuatore resta documentato come sviluppo successivo.
+
+
+## Predisposizione sistema di scarto
+
+Per ogni difetto finalizzato il sistema produce anche un evento tecnico separato dal report qualità. L'evento conserva bounding box in pixel e coordinate normalizzate, timestamp/frame finale e la porzione trasversale del nastro occupata dal prodotto.
+
+La larghezza utile della ROI può essere suddivisa in un numero configurabile di botole. In base all'estensione verticale della bounding box, il software calcola la prima e l'ultima botola coinvolta e l'elenco delle botole candidate da aprire. Se il prodotto attraversa più zone, vengono indicate più botole adiacenti.
+
+La componente longitudinale non viene trasformata in un comando hardware nel Capstone: frame e timestamp costituiscono il riferimento che un futuro encoder userà per determinare il momento di apertura delle botole.
+
+Il file tecnico scaricabile dalla dashboard è denominato `eventi_scarto_<lotto>_<prodotto>.csv`. Il report qualità per lotto resta invece sintetico e separato.
