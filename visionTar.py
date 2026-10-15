@@ -1765,12 +1765,8 @@ def process_video(
                 if annotated_writer is not None:
                     annotated_writer.write(frame)
 
-                if frame_callback is not None and (
-                    frame_number == 1
-                    or frame_number % 3 == 0
-                    or (total_frames > 0 and frame_number >= total_frames)
-                ):
-                    frame_callback(frame_number, total_frames, frame.copy())
+                if frame_callback is not None:
+                    frame_callback(frame_number, total_frames, frame)
 
                 if show_window:
                     cv2.imshow(window_name, frame)
