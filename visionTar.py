@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 1.8
+Versione 1.9
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -104,6 +104,7 @@ ROTTO_STRONG_MAX_CIRCULARITY = 0.55
 ROTTO_STRONG_MAX_SOLIDITY = 0.82
 ROTTO_STRONG_MIN_OBSERVATIONS = 1
 ROTTO_STRONG_MIN_AVG_CONFIDENCE = 0.45
+ROTTO_STRONG_MIN_SCORE_RATIO = 0.55
 ROTTO_STRONG_THRESHOLD = 0.12
 
 
@@ -595,6 +596,9 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "track_aspect": 0.0,
             "track_extent": 0.0,
             "strong_shape_override": False,
+            "rotto_observations": 0,
+            "rotto_avg_confidence": 0.0,
+            "rotto_score_ratio": 0.0,
         }
 
     weighted_scores = defaultdict(float)
@@ -625,6 +629,22 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
     candidate_avg_confidence = (
         sum(candidate_confidences) / candidate_observations
         if candidate_observations > 0
+        else 0.0
+    )
+
+    # Evidenza YOLO specifica per "rotto", calcolata indipendentemente
+    # dalla classe difettosa candidata come prevalente.
+    rotto_confidences = confidences["rotto"]
+    rotto_observations = len(rotto_confidences)
+    rotto_avg_confidence = (
+        sum(rotto_confidences) / rotto_observations
+        if rotto_observations > 0
+        else 0.0
+    )
+    rotto_score = weighted_scores.get("rotto", 0.0)
+    rotto_score_ratio = (
+        rotto_score / top_defect_score
+        if top_defect_score > 0
         else 0.0
     )
 
@@ -705,32 +725,60 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
     shape_support = "nessuno"
     shape_anomalies = 0
     strong_shape_override = False
-    if candidate_label == "rotto":
-        shape_anomalies += int(track_circularity <= ROTTO_MAX_CIRCULARITY)
-        shape_anomalies += int(track_solidity <= ROTTO_MAX_SOLIDITY)
-        shape_anomalies += int(
-            track_aspect <= ROTTO_MIN_ASPECT or track_aspect >= ROTTO_MAX_ASPECT
+
+    # La geometria viene valutata su ogni track, non solo quando "rotto"
+    # e gia la prima candidatura YOLO tra i difetti.
+    shape_anomalies += int(track_circularity <= ROTTO_MAX_CIRCULARITY)
+    shape_anomalies += int(track_solidity <= ROTTO_MAX_SOLIDITY)
+    shape_anomalies += int(
+        track_aspect <= ROTTO_MIN_ASPECT or track_aspect >= ROTTO_MAX_ASPECT
+    )
+    shape_anomalies += int(track_extent <= ROTTO_MAX_EXTENT)
+
+    if candidate_label == "rotto" and shape_anomalies >= ROTTO_MIN_ANOMALY_SIGNALS:
+        shape_support = "rotto"
+        threshold = min(threshold, ROTTO_SHAPE_SUPPORTED_THRESHOLD)
+
+    strong_shape_override = (
+        shape_anomalies >= ROTTO_STRONG_MIN_ANOMALIES
+        and (
+            track_circularity <= ROTTO_STRONG_MAX_CIRCULARITY
+            or track_solidity <= ROTTO_STRONG_MAX_SOLIDITY
         )
-        shape_anomalies += int(track_extent <= ROTTO_MAX_EXTENT)
+        and rotto_observations >= ROTTO_STRONG_MIN_OBSERVATIONS
+        and rotto_avg_confidence >= ROTTO_STRONG_MIN_AVG_CONFIDENCE
+        and rotto_score_ratio >= ROTTO_STRONG_MIN_SCORE_RATIO
+        and color_support == "nessuno"
+    )
 
-        if shape_anomalies >= ROTTO_MIN_ANOMALY_SIGNALS:
-            shape_support = "rotto"
-            threshold = min(threshold, ROTTO_SHAPE_SUPPORTED_THRESHOLD)
-
-        strong_shape_override = (
-            shape_anomalies >= ROTTO_STRONG_MIN_ANOMALIES
-            and (
-                track_circularity <= ROTTO_STRONG_MAX_CIRCULARITY
-                or track_solidity <= ROTTO_STRONG_MAX_SOLIDITY
-            )
-            and candidate_observations >= ROTTO_STRONG_MIN_OBSERVATIONS
-            and candidate_avg_confidence >= ROTTO_STRONG_MIN_AVG_CONFIDENCE
-            and color_support == "nessuno"
-        )
-
-        if strong_shape_override:
-            shape_support = "rotto_forte"
-            threshold = min(threshold, ROTTO_STRONG_THRESHOLD)
+    if strong_shape_override:
+        # Secondo canale geometrico: puo ribaltare anche un voto complessivo
+        # dominato da "buono", pur richiedendo evidenza YOLO reale di rotto.
+        shape_support = "rotto_forte"
+        return {
+            "label": "rotto",
+            "confidence": rotto_avg_confidence,
+            "state": "FINALE",
+            "defect_share": defect_share,
+            "class_share": (
+                rotto_score / defect_score if defect_score > 0 else 0.0
+            ),
+            "threshold": ROTTO_STRONG_THRESHOLD,
+            "color_support": color_support,
+            "track_v": track_v,
+            "track_s": track_s,
+            "track_lab_l": track_lab_l,
+            "shape_support": shape_support,
+            "shape_anomalies": shape_anomalies,
+            "track_circularity": track_circularity,
+            "track_solidity": track_solidity,
+            "track_aspect": track_aspect,
+            "track_extent": track_extent,
+            "strong_shape_override": True,
+            "rotto_observations": rotto_observations,
+            "rotto_avg_confidence": rotto_avg_confidence,
+            "rotto_score_ratio": rotto_score_ratio,
+        }
 
     if defect_share >= threshold and defect_score > 0:
         if class_share < DEFECT_CLASS_MIN_SHARE:
@@ -752,6 +800,9 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
                 "track_aspect": track_aspect,
                 "track_extent": track_extent,
                 "strong_shape_override": strong_shape_override,
+                "rotto_observations": rotto_observations,
+                "rotto_avg_confidence": rotto_avg_confidence,
+                "rotto_score_ratio": rotto_score_ratio,
             }
         return {
             "label": candidate_label,
@@ -771,6 +822,9 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "track_aspect": track_aspect,
             "track_extent": track_extent,
             "strong_shape_override": strong_shape_override,
+            "rotto_observations": rotto_observations,
+            "rotto_avg_confidence": rotto_avg_confidence,
+            "rotto_score_ratio": rotto_score_ratio,
         }
 
     good_conf = (
@@ -924,6 +978,9 @@ def process_video(
                     "track_aspect_median",
                     "track_extent_median",
                     "override_forma_forte",
+                    "rotto_osservazioni",
+                    "rotto_conf_media",
+                    "rotto_score_ratio",
                 ]
             )
 
@@ -1109,6 +1166,9 @@ def process_video(
                             "track_aspect": None,
                             "track_extent": None,
                             "strong_shape_override": None,
+                            "rotto_observations": None,
+                            "rotto_avg_confidence": None,
+                            "rotto_score_ratio": None,
                         }
                     else:
                         unmatched_track_ids.discard(best_id)
@@ -1174,6 +1234,9 @@ def process_video(
                         track["track_aspect"] = float(verdict["track_aspect"])
                         track["track_extent"] = float(verdict["track_extent"])
                         track["strong_shape_override"] = bool(verdict["strong_shape_override"])
+                        track["rotto_observations"] = int(verdict["rotto_observations"])
+                        track["rotto_avg_confidence"] = float(verdict["rotto_avg_confidence"])
+                        track["rotto_score_ratio"] = float(verdict["rotto_score_ratio"])
                         recent_final = (best_id, final_label, final_conf)
                         recent_final_until = frame_number + 20
 
@@ -1307,6 +1370,21 @@ def process_video(
                                     if track["strong_shape_override"] is not None
                                     else ""
                                 ),
+                                (
+                                    track["rotto_observations"]
+                                    if track["rotto_observations"] is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{track['rotto_avg_confidence']:.4f}"
+                                    if track["rotto_avg_confidence"] is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{track['rotto_score_ratio']:.4f}"
+                                    if track["rotto_score_ratio"] is not None
+                                    else ""
+                                ),
                             ]
                         )
                         saved_rows += 1
@@ -1359,6 +1437,9 @@ def process_video(
                             track["track_aspect"] = float(verdict["track_aspect"])
                             track["track_extent"] = float(verdict["track_extent"])
                             track["strong_shape_override"] = bool(verdict["strong_shape_override"])
+                        track["rotto_observations"] = int(verdict["rotto_observations"])
+                        track["rotto_avg_confidence"] = float(verdict["rotto_avg_confidence"])
+                        track["rotto_score_ratio"] = float(verdict["rotto_score_ratio"])
                             recent_final = (
                                 track_id,
                                 track["final_label"],
