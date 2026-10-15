@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 1.9
+Versione 2.0
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -50,7 +50,7 @@ ROI_LEFT_RATIO = 0.30
 ROI_RIGHT_RATIO = 0.12
 ROI_TOP_RATIO = 0.20
 ROI_BOTTOM_RATIO = 0.32
-DEADLINE_X_RATIO = 0.30
+DEADLINE_X_RATIO = 0.40
 
 DEFAULT_MODEL_PATH = Path(
     "C:/Users/Lello/Documents/GitHub/capstone-vision-quality/"
@@ -915,6 +915,8 @@ def process_video(
 
     suffix = "_detections_test.csv" if test_mode else "_difetti.csv"
     output_path = video_path.with_name(f"{video_path.stem}{suffix}")
+    final_suffix = "_finali_test.csv" if test_mode else "_finali.csv"
+    final_output_path = video_path.with_name(f"{video_path.stem}{final_suffix}")
 
     frame_number = 0
     saved_rows = 0
@@ -933,14 +935,89 @@ def process_video(
     next_track_id = 1
     recent_final = None
     recent_final_until = 0
+    finalized_track_ids = set()
 
     try:
-        with output_path.open(
-            mode="w",
-            newline="",
-            encoding="utf-8",
-        ) as csv_file:
+        with (
+            output_path.open(
+                mode="w",
+                newline="",
+                encoding="utf-8",
+            ) as csv_file,
+            final_output_path.open(
+                mode="w",
+                newline="",
+                encoding="utf-8",
+            ) as final_csv_file,
+        ):
             writer = csv.writer(csv_file)
+            final_writer = csv.writer(final_csv_file)
+
+            final_writer.writerow(
+                [
+                    "track_id",
+                    "frame_finale",
+                    "stato",
+                    "responso_finale",
+                    "confidence_finale",
+                    "quota_difetto",
+                    "quota_classe_finale",
+                    "soglia_difetto_usata",
+                    "supporto_colore",
+                    "track_v_median",
+                    "track_s_median",
+                    "track_lab_l_median",
+                    "supporto_forma",
+                    "anomalie_forma",
+                    "track_circularity_median",
+                    "track_solidity_median",
+                    "track_aspect_median",
+                    "track_extent_median",
+                    "override_forma_forte",
+                    "rotto_osservazioni",
+                    "rotto_conf_media",
+                    "rotto_score_ratio",
+                    "x_ultimo",
+                    "y_ultimo",
+                ]
+            )
+
+            def persist_final_track(track_id, track) -> None:
+                """Scrive una sola riga per ogni tarallo finalizzato."""
+                if track_id in finalized_track_ids or track["final_label"] is None:
+                    return
+
+                final_writer.writerow(
+                    [
+                        track_id,
+                        track["final_frame"],
+                        track["final_state"],
+                        track["final_label"],
+                        f"{track['final_confidence']:.4f}",
+                        f"{track['defect_share']:.4f}",
+                        f"{track['final_class_share']:.4f}",
+                        f"{track['defect_threshold_used']:.4f}",
+                        track["color_support"] or "",
+                        f"{track['track_v']:.2f}",
+                        f"{track['track_s']:.2f}",
+                        f"{track['track_lab_l']:.2f}",
+                        track["shape_support"] or "",
+                        track["shape_anomalies"],
+                        f"{track['track_circularity']:.4f}",
+                        f"{track['track_solidity']:.4f}",
+                        f"{track['track_aspect']:.4f}",
+                        f"{track['track_extent']:.4f}",
+                        int(bool(track["strong_shape_override"])),
+                        track["rotto_observations"],
+                        f"{track['rotto_avg_confidence']:.4f}",
+                        f"{track['rotto_score_ratio']:.4f}",
+                        track["cx"],
+                        track["cy"],
+                    ]
+                )
+                final_csv_file.flush()
+                finalized_track_ids.add(track_id)
+
             writer.writerow(
                 [
                     "frame",
@@ -1018,7 +1095,22 @@ def process_video(
                 roi_y1 = int(frame_height * live_top)
                 roi_y2 = int(frame_height * (1.0 - live_bottom))
                 deadline_x = int(frame_width * live_deadline)
-                deadline_x = max(roi_x1 + 5, min(roi_x2 - 5, deadline_x))
+
+                # Nel video reale il nastro scorre da destra verso sinistra.
+                # La deadline deve restare ben dentro la ROI: servono alcuni
+                # frame dopo il passaggio della linea per osservare davvero
+                # l'attraversamento e non dipendere quasi solo dal rescue.
+                post_deadline_buffer = max(30, int(frame_width * 0.08))
+                min_deadline_x = roi_x1 + post_deadline_buffer
+                deadline_x = max(min_deadline_x, min(roi_x2 - 5, deadline_x))
+
+                effective_deadline_pct = int(round(deadline_x * 100 / frame_width))
+                if cv2.getTrackbarPos("Deadline X %", window_name) != effective_deadline_pct:
+                    cv2.setTrackbarPos(
+                        "Deadline X %",
+                        window_name,
+                        effective_deadline_pct,
+                    )
 
                 # NMS agnostica rispetto alla classe: se due box di classi
                 # diverse descrivono lo stesso oggetto, resta quella piu forte.
@@ -1240,6 +1332,7 @@ def process_video(
                         track["rotto_observations"] = int(verdict["rotto_observations"])
                         track["rotto_avg_confidence"] = float(verdict["rotto_avg_confidence"])
                         track["rotto_score_ratio"] = float(verdict["rotto_score_ratio"])
+                        persist_final_track(best_id, track)
                         recent_final = (best_id, final_label, final_conf)
                         recent_final_until = frame_number + 20
 
@@ -1443,6 +1536,7 @@ def process_video(
                             track["rotto_observations"] = int(verdict["rotto_observations"])
                             track["rotto_avg_confidence"] = float(verdict["rotto_avg_confidence"])
                             track["rotto_score_ratio"] = float(verdict["rotto_score_ratio"])
+                            persist_final_track(track_id, track)
                             recent_final = (
                                 track_id,
                                 track["final_label"],
@@ -1515,8 +1609,10 @@ def process_video(
         capture.release()
         cv2.destroyAllWindows()
 
-    print(f"Righe salvate nel CSV: {saved_rows}")
-    print(f"File CSV chiuso correttamente: {output_path}")
+    print(f"Righe salvate nel CSV detection: {saved_rows}")
+    print(f"File detection: {output_path}")
+    print(f"Responsi finali unici: {len(finalized_track_ids)}")
+    print(f"File finali: {final_output_path}")
 
     return output_path
 
