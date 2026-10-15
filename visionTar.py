@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 2.0
+Versione 2.1
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -86,6 +86,7 @@ POCO_MIN_LAB_L = 198.0
 POCO_MAX_S = 105.0
 COTTO_COLOR_SUPPORTED_THRESHOLD = 0.24
 POCO_COLOR_SUPPORTED_THRESHOLD = 0.32
+POCO_COLOR_MIN_OBSERVATIONS = 2
 
 # Supporto geometrico prudenziale per la classe rotto.
 # Le soglie sono iniziali e verranno validate sul benchmark manuale del video 2.
@@ -701,6 +702,7 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
         color_supports_candidate = True
     elif (
         candidate_label == "poco"
+        and candidate_observations >= POCO_COLOR_MIN_OBSERVATIONS
         and track_v >= POCO_MIN_V
         and track_lab_l >= POCO_MIN_LAB_L
         and track_s <= POCO_MAX_S
