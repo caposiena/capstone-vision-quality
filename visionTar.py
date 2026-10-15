@@ -34,6 +34,8 @@ from tkinter import filedialog, messagebox
 import cv2
 from ultralytics import YOLO
 
+from acquisition_config import get_profile
+
 
 DEFECT_CLASSES = {
     "blob",
@@ -44,13 +46,14 @@ DEFECT_CLASSES = {
 
 CONFIDENCE_THRESHOLD = 0.35
 
-# Area centrale di ispezione. Le detection con baricentro fuori da questa
-# regione vengono ignorate per ridurre falsi positivi ai bordi del frame.
-ROI_LEFT_RATIO = 0.12
-ROI_RIGHT_RATIO = 0.30
-ROI_TOP_RATIO = 0.18
-ROI_BOTTOM_RATIO = 0.24
-DEADLINE_X_RATIO = 0.65
+# Geometria di acquisizione centralizzata. Il profilo standard puo essere
+# sostituito dalla dashboard senza modificare le soglie del classificatore.
+BASE_ACQUISITION_PROFILE = get_profile()
+ROI_LEFT_RATIO = BASE_ACQUISITION_PROFILE.roi_left
+ROI_RIGHT_RATIO = BASE_ACQUISITION_PROFILE.roi_right
+ROI_TOP_RATIO = BASE_ACQUISITION_PROFILE.roi_top
+ROI_BOTTOM_RATIO = BASE_ACQUISITION_PROFILE.roi_bottom
+DEADLINE_X_RATIO = BASE_ACQUISITION_PROFILE.deadline_x
 
 DEFAULT_MODEL_PATH = Path(
     "C:/Users/Lello/Documents/GitHub/capstone-vision-quality/"
@@ -1218,7 +1221,6 @@ def process_video(
                 roi_y2 = int(frame_height * (1.0 - live_bottom))
                 deadline_x = int(frame_width * live_deadline)
 
-                # Nel video reale il nastro scorre da destra verso sinistra.
                 # La deadline deve restare ben dentro la ROI: servono alcuni
                 # frame dopo il passaggio della linea per osservare davvero
                 # l'attraversamento e non dipendere quasi solo dal rescue.
