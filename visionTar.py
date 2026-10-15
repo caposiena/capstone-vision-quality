@@ -795,6 +795,7 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
         "track_solidity": track_solidity,
         "track_aspect": track_aspect,
         "track_extent": track_extent,
+        "strong_shape_override": strong_shape_override,
     }
 
 
