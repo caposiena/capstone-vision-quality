@@ -1,38 +1,91 @@
-﻿# Sistema di visione artificiale per il controllo qualità di prodotti da forno
+# Sistema di visione artificiale per il controllo qualità di prodotti da forno
 
-## Sinossi
+Progetto Capstone sviluppato per il Master EPICODE.
 
-Il progetto nasce da una reale esigenza aziendale legata alla valutazione di un investimento per automatizzare il controllo qualità e la gestione dello scarto di prodotti da forno.
+L'obiettivo è realizzare un prototipo capace di osservare un flusso di taralli su nastro trasportatore, individuare i singoli prodotti e segnalare le principali non conformità visive.
 
-Attualmente il controllo della conformità viene effettuato visivamente da un operatore. L’obiettivo è sviluppare un prototipo software capace di svolgere automaticamente questa funzione su un flusso continuo di prodotto disposto su nastro trasportatore.
+## Stato del progetto
 
-Il sistema dovrà acquisire immagini e video tramite telecamera, individuare i singoli prodotti e riconoscere le principali anomalie oggi rilevate manualmente, in particolare difetti di cottura, forma e sovrapposizione.
+La fase di addestramento e calibrazione della baseline V1 è conclusa.
 
-Per lo sviluppo verranno utilizzati Python, OpenCV per l’acquisizione e l’analisi delle immagini, NumPy per la gestione numerica dei dati, YOLO per il riconoscimento e la localizzazione degli oggetti e Label Studio per la preparazione e l’annotazione del dataset di addestramento.
+Classi attuali:
 
-Per ogni prodotto rilevato il sistema dovrà restituire la classe assegnata, il livello di confidenza e la posizione nell’immagine, così da distinguere i prodotti conformi da quelli da scartare.
+- `buono`
+- `cotto`
+- `poco`
+- `blob`
+- `rotto`
 
-Il modello verrà addestrato con una logica prudenziale, privilegiando la riduzione dei falsi negativi, cioè dei prodotti non conformi lasciati passare, anche a costo di accettare un numero limitato di falsi positivi successivamente verificabili dall’operatore.
+Il sistema combina il detector YOLO con un tracking leggero e con controlli aggiuntivi sul colore e sulla geometria. Il responso viene congelato quando il prodotto attraversa una deadline configurabile all'interno della ROI.
 
-Il progetto includerà inoltre una dashboard realizzata con Streamlit, collegata a un database leggero, per monitorare gli scarti, associarli ai lotti e alle fasce orarie di produzione, registrare eventuali correzioni dell’operatore e tenere traccia dei test funzionali del sistema di controllo.
+La baseline è stata calibrata sul video 2, verificata sul video 3 e successivamente provata anche sul video 1, che presenta uno zoom e condizioni di illuminazione differenti. Dopo questi test le soglie di classificazione sono state congelate.
 
-La dashboard permetterà inoltre di raccogliere informazioni sui fermi della linea e sulle relative causali, in modo da affiancare al controllo qualità anche un primo livello di monitoraggio della produttività.
+Il percorso seguito per la calibrazione e i risultati dei test sono descritti in [docs/CALIBRAZIONE.md](docs/CALIBRAZIONE.md).
 
-Il flusso video verrà utilizzato soltanto per l’elaborazione e non verrà archiviato in modo permanente. Saranno invece conservati i dati sintetici utili alla valutazione del processo produttivo e delle prestazioni del modello.
+La composizione del dataset e le metriche del modello sono riportate in [docs/DATASET.md](docs/DATASET.md).
 
-Il prototipo verrà valutato attraverso metriche di precision, recall, F1-score, qualità della localizzazione e tempi di inferenza, verificandone la compatibilità con le esigenze produttive.
+## Struttura del repository
 
-L’integrazione con hardware industriale dedicato, encoder, sistemi di scarto, dispositivi edge e collegamenti al gestionale aziendale resterà fuori dal perimetro del Capstone, pur essendo prevista come possibile evoluzione successiva del progetto.
+```text
+capstone-vision-quality/
+├── README.md
+├── requirements.txt
+├── visionTar.py
+├── trainTar.py
+├── testTar.py
+├── buildDatasetV2.py
+└── docs/
+    ├── CALIBRAZIONE.md
+    └── DATASET.md
+```
 
+### File principali
 
-## Baseline validata V1 - 15 ottobre 2026
+`visionTar.py` è l'applicazione usata per l'analisi dei video, il tracking e la produzione dei CSV.
 
-Configurazione congelata: ROI sinistra 30%, destra 12%, alto 20%, basso 25%, deadline X 35%. Restano attivi tracking, CSV detection frame-by-frame, CSV finali one-row-per-track, supporto colore per cotto/poco e supporto geometrico per rotto.
+`trainTar.py` contiene il flusso di training YOLO.
 
-Risultati video 2, usato per calibrazione: ground truth manuale cotto 6, poco 5, blob 7, rotto 14; sistema cotto 6, poco 5, blob 6, rotto 15.
+`testTar.py` viene usato per la valutazione del modello sul test set.
 
-Risultati video 3, prima validazione indipendente: ground truth manuale cotto 2, poco 3, blob 1, rotto 8; sistema cotto 2, poco 3, blob 1, rotto 9.
+`buildDatasetV2.py` prepara la struttura del dataset V2.
 
-Decisione: baseline V1 in freeze preliminare. Non modificare soglie colore, geometria, tracking o deadline sulla sola base dei video 2 e 3.
+## Pipeline
 
-Prossimo gate: video 1. Poiche presenta uno zoom/framing differente, ROI e deadline saranno verificati visivamente prima del test. Eventuali regolazioni geometriche specifiche del video 1 non devono modificare le soglie di classificazione senza nuova evidenza.
+Il flusso attuale è:
+
+video → ROI → YOLO → tracking → supporto colore/geometria → deadline → responso finale → CSV
+
+Durante l'esecuzione vengono prodotti due tipi di file:
+
+- un CSV con le detection frame per frame;
+- un CSV finale con una sola riga per ogni track finalizzato.
+
+I video vengono usati per l'elaborazione e non fanno parte del repository.
+
+## Risultati sintetici
+
+Sul video 2, usato per la calibrazione, il sistema ha restituito:
+
+- cotto: 6, rispetto a 6 reali;
+- poco: 5, rispetto a 5 reali;
+- blob: 6, rispetto a 7 reali;
+- rotto: 15, rispetto a 14 reali.
+
+Sul video 3, usato come prima validazione indipendente:
+
+- cotto: 2, rispetto a 2 reali;
+- poco: 3, rispetto a 3 reali;
+- blob: 1, rispetto a 1 reale;
+- rotto: 9, rispetto a 8 reali.
+
+Il video 1 ha introdotto volutamente una condizione meno favorevole, con zoom diverso e illuminazione meno uniforme. Sul difetto `rotto` il sistema ha contato 17 pezzi contro 14 del conteggio manuale. Il test è stato mantenuto perché mostra in modo utile un limite reale del prototipo e l'importanza, in una futura installazione industriale, di camera e illuminazione controllate.
+
+## Scelte progettuali
+
+Il sistema è volutamente prudenziale: è preferibile accettare un numero limitato di falsi positivi, che possono essere verificati dall'operatore tra gli scarti, piuttosto che lasciare passare prodotti chiaramente non conformi.
+
+L'integrazione con encoder, sistema fisico di scarto, dispositivi edge e gestionale aziendale resta fuori dal perimetro del Capstone.
+
+## Prossimi passi
+
+Con la baseline V1 congelata, il lavoro prosegue sulla parte applicativa: raccolta strutturata dei risultati, dashboard, monitoraggio dei lotti e preparazione della demo finale.
