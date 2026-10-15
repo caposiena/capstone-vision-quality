@@ -1309,12 +1309,12 @@ def process_video(
                             track["track_v"] = float(verdict["track_v"])
                             track["track_s"] = float(verdict["track_s"])
                             track["track_lab_l"] = float(verdict["track_lab_l"])
-                        track["shape_support"] = str(verdict["shape_support"])
-                        track["shape_anomalies"] = int(verdict["shape_anomalies"])
-                        track["track_circularity"] = float(verdict["track_circularity"])
-                        track["track_solidity"] = float(verdict["track_solidity"])
-                        track["track_aspect"] = float(verdict["track_aspect"])
-                        track["track_extent"] = float(verdict["track_extent"])
+                            track["shape_support"] = str(verdict["shape_support"])
+                            track["shape_anomalies"] = int(verdict["shape_anomalies"])
+                            track["track_circularity"] = float(verdict["track_circularity"])
+                            track["track_solidity"] = float(verdict["track_solidity"])
+                            track["track_aspect"] = float(verdict["track_aspect"])
+                            track["track_extent"] = float(verdict["track_extent"])
                             recent_final = (
                                 track_id,
                                 track["final_label"],
