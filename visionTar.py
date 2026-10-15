@@ -994,6 +994,9 @@ def process_video(
     output_path = video_path.with_name(f"{video_path.stem}{suffix}")
     final_suffix = "_finali_test.csv" if test_mode else "_finali.csv"
     final_output_path = video_path.with_name(f"{video_path.stem}{final_suffix}")
+    defect_suffix = "_scarti_test.csv" if test_mode else "_scarti.csv"
+    defect_output_path = video_path.with_name(f"{video_path.stem}{defect_suffix}")
+    video_fps = float(capture.get(cv2.CAP_PROP_FPS) or 0.0)
 
     frame_number = 0
     saved_rows = 0
@@ -1026,9 +1029,29 @@ def process_video(
                 newline="",
                 encoding="utf-8",
             ) as final_csv_file,
+            defect_output_path.open(
+                mode="w",
+                newline="",
+                encoding="utf-8",
+            ) as defect_csv_file,
         ):
             writer = csv.writer(csv_file)
             final_writer = csv.writer(final_csv_file)
+            defect_writer = csv.writer(defect_csv_file)
+
+            defect_writer.writerow(
+                [
+                    "track_id",
+                    "classe",
+                    "confidence",
+                    "x_px",
+                    "y_px",
+                    "x_norm",
+                    "y_norm",
+                    "frame_finale",
+                    "timestamp_s",
+                ]
+            )
 
             final_writer.writerow(
                 [
@@ -1093,6 +1116,28 @@ def process_video(
                     ]
                 )
                 final_csv_file.flush()
+
+                if track["final_label"] in DEFECT_CLASSES:
+                    timestamp_s = (
+                        float(track["final_frame"]) / video_fps
+                        if video_fps > 0
+                        else 0.0
+                    )
+                    defect_writer.writerow(
+                        [
+                            track_id,
+                            track["final_label"],
+                            f"{track['final_confidence']:.4f}",
+                            track["cx"],
+                            track["cy"],
+                            f"{track['cx'] / max(1, frame_width):.6f}",
+                            f"{track['cy'] / max(1, frame_height):.6f}",
+                            track["final_frame"],
+                            f"{timestamp_s:.3f}",
+                        ]
+                    )
+                    defect_csv_file.flush()
+
                 finalized_track_ids.add(track_id)
 
             writer.writerow(
@@ -1692,6 +1737,7 @@ def process_video(
     print(f"File detection: {output_path}")
     print(f"Responsi finali unici: {len(finalized_track_ids)}")
     print(f"File finali: {final_output_path}")
+    print(f"Eventi scarto: {defect_output_path}")
 
     return output_path
 
