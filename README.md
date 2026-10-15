@@ -58,6 +58,8 @@ capstone-vision-quality/
 
 `video_source.py` astrae la sorgente video e consente di usare file, videocamera USB o stream IP senza cambiare la pipeline.
 
+`database.py` gestisce il database SQLite locale con sessioni di produzione e singoli eventi di scarto.
+
 ## Pipeline
 
 Il flusso attuale è:
@@ -100,4 +102,6 @@ L'integrazione con encoder, sistema fisico di scarto, dispositivi edge e gestion
 
 Con la baseline V1 congelata è iniziata la parte applicativa. La dashboard gestisce già due profili di acquisizione validati sui video di prova, permette di calibrare ROI e deadline senza modificare il classificatore ed è predisposta per file video, videocamera USB e stream IP.
 
-Il prossimo gate è collegare l'inferenza alla dashboard e salvare in un database leggero i dati di sessione, lotto, conteggi, scarti e correzioni dell'operatore.
+La dashboard consente ora all'operatore di aprire una sessione indicando data di produzione, descrizione prodotto e lotto. I dati vengono registrati in SQLite e il riepilogo della sessione è predisposto per mostrare totale scarti e conteggi separati per `cotto`, `poco`, `blob` e `rotto`.
+
+Il prossimo gate è collegare direttamente gli eventi prodotti dall'inferenza live alla sessione attiva, in modo che i contatori si aggiornino automaticamente durante il controllo.
