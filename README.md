@@ -31,6 +31,9 @@ capstone-vision-quality/
 ├── README.md
 ├── requirements.txt
 ├── visionTar.py
+├── dashboard.py
+├── acquisition_config.py
+├── video_source.py
 ├── trainTar.py
 ├── testTar.py
 ├── buildDatasetV2.py
@@ -49,16 +52,23 @@ capstone-vision-quality/
 
 `buildDatasetV2.py` prepara la struttura del dataset V2.
 
+`dashboard.py` contiene la prima dashboard Streamlit per selezionare la sorgente video e calibrare visivamente ROI e deadline.
+
+`acquisition_config.py` contiene i profili di acquisizione separati dalle soglie del classificatore.
+
+`video_source.py` astrae la sorgente video e consente di usare file, videocamera USB o stream IP senza cambiare la pipeline.
+
 ## Pipeline
 
 Il flusso attuale è:
 
 video → ROI → YOLO → tracking → supporto colore/geometria → deadline → responso finale → CSV
 
-Durante l'esecuzione vengono prodotti due tipi di file:
+Durante l'esecuzione vengono prodotti tre tipi di file:
 
 - un CSV con le detection frame per frame;
-- un CSV finale con una sola riga per ogni track finalizzato.
+- un CSV finale con una sola riga per ogni track finalizzato;
+- un CSV scarti che contiene solo i pezzi difettosi e le coordinate necessarie a un futuro sistema di scarto.
 
 I video vengono usati per l'elaborazione e non fanno parte del repository.
 
@@ -88,4 +98,6 @@ L'integrazione con encoder, sistema fisico di scarto, dispositivi edge e gestion
 
 ## Prossimi passi
 
-Con la baseline V1 congelata, il lavoro prosegue sulla parte applicativa: raccolta strutturata dei risultati, dashboard, monitoraggio dei lotti e preparazione della demo finale.
+Con la baseline V1 congelata è iniziata la parte applicativa. La dashboard gestisce già due profili di acquisizione validati sui video di prova, permette di calibrare ROI e deadline senza modificare il classificatore ed è predisposta per file video, videocamera USB e stream IP.
+
+Il prossimo gate è collegare l'inferenza alla dashboard e salvare in un database leggero i dati di sessione, lotto, conteggi, scarti e correzioni dell'operatore.
