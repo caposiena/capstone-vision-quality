@@ -18,3 +18,8 @@ runs/
 
 *_scarti_test.csv
 *_scarti.csv
+
+# Database locale di runtime
+visiontar.db
+visiontar.db-shm
+visiontar.db-wal
