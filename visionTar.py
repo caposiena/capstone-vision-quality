@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 1.0
+Versione 1.1
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -55,6 +55,9 @@ TRACK_MAX_MISSED_FRAMES = 8
 TRACK_OBSERVATION_WINDOW = 12
 TRACK_MIN_FINAL_OBSERVATIONS = 4
 TRACK_MIN_VOTE_SHARE = 0.55
+TRACK_MIN_MATCH_SCORE = 0.18
+TRACK_MAX_JUMP_RATIO = 0.06
+TRACK_MIN_CROSSING_DELTA = 4
 
 
 def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float, float] | None:
@@ -606,24 +609,54 @@ def process_video(
 
                     best_match_score = -1.0
                     det_bbox = (det["x1"], det["y1"], det["x2"], det["y2"])
+                    det_area = max(
+                        1,
+                        (det["x2"] - det["x1"]) * (det["y2"] - det["y1"]),
+                    )
+                    hard_max_jump = max(30.0, frame_width * TRACK_MAX_JUMP_RATIO)
 
                     for track_id in list(unmatched_track_ids):
                         track = tracks[track_id]
-                        if frame_number - track["last_frame"] > TRACK_MAX_MISSED_FRAMES:
+                        missed = frame_number - track["last_frame"]
+                        if missed > TRACK_MAX_MISSED_FRAMES:
                             continue
 
-                        distance = math.hypot(det["cx"] - track["cx"], det["cy"] - track["cy"])
+                        predicted_cx = track["cx"] + (track["vx"] * missed)
+                        predicted_cy = track["cy"] + (track["vy"] * missed)
+
+                        predicted_distance = math.hypot(
+                            det["cx"] - predicted_cx,
+                            det["cy"] - predicted_cy,
+                        )
+                        raw_distance = math.hypot(
+                            det["cx"] - track["cx"],
+                            det["cy"] - track["cy"],
+                        )
                         iou = box_iou(det_bbox, track["bbox"])
 
-                        # Associazione robusta: una detection deve essere vicina
-                        # oppure sovrapporsi alla box precedente.
-                        if distance > max_distance and iou < 0.05:
+                        # Un salto incompatibile col moto del nastro spezza il track,
+                        # evitando che l'ID venga trasferito a un tarallo vicino.
+                        if raw_distance > hard_max_jump and predicted_distance > hard_max_jump:
                             continue
 
-                        distance_score = max(0.0, 1.0 - (distance / max_distance))
-                        match_score = (0.65 * iou) + (0.35 * distance_score)
+                        size_ratio = min(det_area, track["area"]) / max(det_area, track["area"])
+                        if size_ratio < 0.45 and iou < 0.10:
+                            continue
 
-                        if match_score > best_match_score:
+                        distance_score = max(
+                            0.0,
+                            1.0 - (predicted_distance / max_distance),
+                        )
+                        match_score = (
+                            (0.50 * iou)
+                            + (0.35 * distance_score)
+                            + (0.15 * size_ratio)
+                        )
+
+                        if (
+                            match_score >= TRACK_MIN_MATCH_SCORE
+                            and match_score > best_match_score
+                        ):
                             best_match_score = match_score
                             best_id = track_id
 
@@ -635,6 +668,9 @@ def process_video(
                             "cy": det["cy"],
                             "prev_cx": None,
                             "bbox": (det["x1"], det["y1"], det["x2"], det["y2"]),
+                            "vx": 0.0,
+                            "vy": 0.0,
+                            "area": max(1, (det["x2"] - det["x1"]) * (det["y2"] - det["y1"])),
                             "last_frame": frame_number,
                             "observations": deque(maxlen=TRACK_OBSERVATION_WINDOW),
                             "final_label": None,
@@ -647,10 +683,20 @@ def process_video(
 
                     track = tracks[best_id]
                     previous_cx = track["cx"]
+                    previous_cy = track["cy"]
+                    previous_frame = track["last_frame"]
+                    frame_gap = max(1, frame_number - previous_frame)
+
+                    measured_vx = (det["cx"] - previous_cx) / frame_gap
+                    measured_vy = (det["cy"] - previous_cy) / frame_gap
+
                     track["prev_cx"] = previous_cx
+                    track["vx"] = (0.65 * track["vx"]) + (0.35 * measured_vx)
+                    track["vy"] = (0.65 * track["vy"]) + (0.35 * measured_vy)
                     track["cx"] = det["cx"]
                     track["cy"] = det["cy"]
                     track["bbox"] = det_bbox
+                    track["area"] = det_area
                     track["last_frame"] = frame_number
 
                     # Conserva solo le osservazioni piu recenti prima della deadline,
@@ -663,11 +709,10 @@ def process_video(
                     crossed = (
                         track["prev_cx"] is not None
                         and (track["prev_cx"] - deadline_x) * (det["cx"] - deadline_x) <= 0
-                        and track["prev_cx"] != det["cx"]
+                        and abs(det["cx"] - track["prev_cx"]) >= TRACK_MIN_CROSSING_DELTA
                     )
-                    on_deadline = abs(det["cx"] - deadline_x) <= 6
 
-                    if track["final_label"] is None and (crossed or on_deadline):
+                    if track["final_label"] is None and crossed:
                         observations = list(track["observations"])
 
                         if len(observations) < TRACK_MIN_FINAL_OBSERVATIONS:
