@@ -49,6 +49,10 @@ PROFILES: dict[str, AcquisitionProfile] = {
 
 DEFAULT_PROFILE_KEY = "standard_rtl"
 
+# Numero iniziale di botole trasversali nel prototipo software.
+# E' un parametro di configurazione, non un vincolo hardware definitivo.
+DEFAULT_TRAPDOOR_COUNT = 8
+
 
 def get_profile(key: str = DEFAULT_PROFILE_KEY) -> AcquisitionProfile:
     try:
