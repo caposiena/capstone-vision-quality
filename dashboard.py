@@ -20,6 +20,7 @@ from database import (
     init_db,
 )
 from video_source import open_video_file
+from visionTar import DEFAULT_MODEL_PATH, process_video
 
 
 st.set_page_config(
@@ -130,6 +131,10 @@ init_state()
 
 if "display_mode" not in st.session_state:
     st.session_state.display_mode = "calibration"
+if "processed_video_bytes" not in st.session_state:
+    st.session_state.processed_video_bytes = None
+if "analysis_summary" not in st.session_state:
+    st.session_state.analysis_summary = None
 
 st.title("visionTar")
 st.caption("Controllo qualità visivo - baseline V1")
@@ -202,22 +207,90 @@ with viewer_col:
         except Exception as exc:
             st.error(f"Impossibile leggere il video: {exc}")
 
-    view_btn1, view_btn2, view_spacer = st.columns([0.22, 0.22, 0.56])
+    view_btn1, view_btn2, view_spacer = st.columns([0.24, 0.30, 0.46])
     with view_btn1:
         if st.button("Calibra", use_container_width=True):
             st.session_state.display_mode = "calibration"
+            st.session_state.processed_video_bytes = None
     with view_btn2:
-        if st.button("Riproduci", use_container_width=True, disabled=uploaded is None):
-            st.session_state.display_mode = "play"
+        analyze_disabled = (
+            uploaded is None
+            or st.session_state.active_session_id is None
+            or invalid_roi
+        )
+        analyze_clicked = st.button(
+            "Avvia analisi YOLO",
+            type="primary",
+            use_container_width=True,
+            disabled=analyze_disabled,
+        )
 
-    screen_left, screen_center, screen_right = st.columns([0.08, 0.84, 0.08])
+    if analyze_clicked:
+        if not DEFAULT_MODEL_PATH.exists():
+            st.error(f"Modello YOLO non trovato: {DEFAULT_MODEL_PATH}")
+        else:
+            work_dir = Path(tempfile.mkdtemp(prefix="visiontar_dashboard_"))
+            input_path = work_dir / "input.mp4"
+            annotated_path = work_dir / "elaborato.mp4"
+            input_path.write_bytes(uploaded.getvalue())
+
+            with st.spinner("Analisi YOLO in corso..."):
+                try:
+                    process_video(
+                        video_path=input_path,
+                        model_path=DEFAULT_MODEL_PATH,
+                        test_mode=True,
+                        roi_left=st.session_state.roi_left / 100.0,
+                        roi_right=st.session_state.roi_right / 100.0,
+                        roi_top=st.session_state.roi_top / 100.0,
+                        roi_bottom=st.session_state.roi_bottom / 100.0,
+                        deadline_ratio=st.session_state.deadline_x / 100.0,
+                        show_window=False,
+                        annotated_output_path=annotated_path,
+                    )
+
+                    scarti_path = input_path.with_name(f"{input_path.stem}_scarti_test.csv")
+                    imported = 0
+                    if scarti_path.exists():
+                        with scarti_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+                            reader = csv.DictReader(csv_file)
+                            for row in reader:
+                                classe = (row.get("classe") or "").strip()
+                                if classe not in {"cotto", "poco", "blob", "rotto"}:
+                                    continue
+                                inserted = add_defect_event(
+                                    st.session_state.active_session_id,
+                                    classe,
+                                    track_id=int(row["track_id"]) if row.get("track_id") else None,
+                                    confidence=float(row["confidence"]) if row.get("confidence") else None,
+                                    x_px=int(float(row["x_px"])) if row.get("x_px") else None,
+                                    y_px=int(float(row["y_px"])) if row.get("y_px") else None,
+                                    x_norm=float(row["x_norm"]) if row.get("x_norm") else None,
+                                    y_norm=float(row["y_norm"]) if row.get("y_norm") else None,
+                                    frame_finale=int(float(row["frame_finale"])) if row.get("frame_finale") else None,
+                                    timestamp_s=float(row["timestamp_s"]) if row.get("timestamp_s") else None,
+                                )
+                                if inserted:
+                                    imported += 1
+
+                    st.session_state.processed_video_bytes = (
+                        annotated_path.read_bytes() if annotated_path.exists() else None
+                    )
+                    st.session_state.analysis_summary = f"Analisi completata · {imported} scarti registrati"
+                    st.session_state.display_mode = "processed"
+                    st.rerun()
+                except Exception as exc:
+                    st.error(f"Errore durante l'analisi YOLO: {exc}")
+
+    screen_left, screen_center, screen_right = st.columns([0.20, 0.60, 0.20])
 
     with screen_center:
         if uploaded is None:
             st.info("Carica un video di prova.")
-        elif st.session_state.display_mode == "play":
-            st.video(uploaded.getvalue())
-            st.caption("Metti in pausa il player e torna su Calibra per modificare ROI e deadline.")
+        elif st.session_state.display_mode == "processed" and st.session_state.processed_video_bytes:
+            st.video(st.session_state.processed_video_bytes, width=420)
+            if st.session_state.analysis_summary:
+                st.success(st.session_state.analysis_summary)
         elif frame_data is not None:
             frame, width, height, fps = frame_data
             overlay = draw_acquisition_overlay(
@@ -229,7 +302,7 @@ with viewer_col:
                 st.session_state.deadline_x,
                 profile.direction,
             )
-            st.image(overlay, channels="RGB", use_container_width=True)
+            st.image(overlay, channels="RGB", width=420)
             st.caption(
                 f"Fotogramma di calibrazione · {width} × {height} px · {fps:.2f} FPS"
             )
@@ -304,46 +377,11 @@ st.divider()
 import_col, report_col = st.columns([0.50, 0.50], gap="large")
 
 with import_col:
-    st.markdown("#### Importazione risultati")
-
-    if st.session_state.active_session_id is not None:
-        scarti_file = st.file_uploader(
-            "File *_scarti.csv prodotto da visionTar",
-            type=["csv"],
-            key="scarti_csv",
-        )
-        if scarti_file is not None and st.button(
-            "Importa scarti",
-            use_container_width=True,
-        ):
-            text_data = scarti_file.getvalue().decode("utf-8-sig")
-            reader = csv.DictReader(io.StringIO(text_data))
-            imported = 0
-
-            for row in reader:
-                classe = (row.get("classe") or "").strip()
-                if classe not in {"cotto", "poco", "blob", "rotto"}:
-                    continue
-
-                inserted = add_defect_event(
-                    st.session_state.active_session_id,
-                    classe,
-                    track_id=int(row["track_id"]) if row.get("track_id") else None,
-                    confidence=float(row["confidence"]) if row.get("confidence") else None,
-                    x_px=int(float(row["x_px"])) if row.get("x_px") else None,
-                    y_px=int(float(row["y_px"])) if row.get("y_px") else None,
-                    x_norm=float(row["x_norm"]) if row.get("x_norm") else None,
-                    y_norm=float(row["y_norm"]) if row.get("y_norm") else None,
-                    frame_finale=int(float(row["frame_finale"])) if row.get("frame_finale") else None,
-                    timestamp_s=float(row["timestamp_s"]) if row.get("timestamp_s") else None,
-                )
-                if inserted:
-                    imported += 1
-
-            st.success(f"Importati {imported} scarti.")
-            st.rerun()
+    st.markdown("#### Stato analisi")
+    if st.session_state.analysis_summary:
+        st.success(st.session_state.analysis_summary)
     else:
-        st.caption("Avvia una sessione prima di importare gli scarti.")
+        st.caption("Calibra il video e avvia l'analisi YOLO. I risultati vengono registrati automaticamente.")
 
 with report_col:
     st.markdown("#### Report per lotto")
