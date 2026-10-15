@@ -8,6 +8,7 @@ from pathlib import Path
 
 import cv2
 import streamlit as st
+from ultralytics import YOLO
 
 from acquisition_config import DEFAULT_PROFILE_KEY, PROFILES
 from database import (
@@ -126,17 +127,45 @@ def read_uploaded_video_frame(uploaded_file):
             os.unlink(temp_path)
 
 
+@st.cache_resource
+def load_cached_model():
+    return YOLO(str(DEFAULT_MODEL_PATH))
+
+
+def prepare_uploaded_video(uploaded_file) -> Path:
+    signature = f"{uploaded_file.name}:{uploaded_file.size}"
+    if (
+        st.session_state.get("prepared_video_signature") == signature
+        and st.session_state.get("prepared_video_path")
+    ):
+        return Path(st.session_state.prepared_video_path)
+
+    work_dir = Path(tempfile.mkdtemp(prefix="visiontar_input_"))
+    suffix = Path(uploaded_file.name).suffix or ".mp4"
+    input_path = work_dir / f"input{suffix}"
+    input_path.write_bytes(uploaded_file.getvalue())
+
+    st.session_state.prepared_video_signature = signature
+    st.session_state.prepared_video_path = str(input_path)
+    return input_path
+
+
+def safe_name(value: str) -> str:
+    cleaned = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in value.strip())
+    return cleaned.strip("_") or "lotto"
+
+
 init_db()
 init_state()
 
 if "display_mode" not in st.session_state:
     st.session_state.display_mode = "calibration"
-if "processed_video_bytes" not in st.session_state:
-    st.session_state.processed_video_bytes = None
 if "analysis_summary" not in st.session_state:
     st.session_state.analysis_summary = None
 if "last_video_signature" not in st.session_state:
     st.session_state.last_video_signature = None
+if "last_live_frame" not in st.session_state:
+    st.session_state.last_live_frame = None
 
 st.title("visionTar")
 st.caption("Controllo qualità visivo - baseline V1")
@@ -163,20 +192,25 @@ settings_col, viewer_col = st.columns([0.34, 0.66], gap="large")
 with settings_col:
     st.markdown("#### Impostazioni video")
 
-    source_type = "File video"
     uploaded = st.file_uploader(
         "Seleziona video di prova",
         type=["mp4", "avi", "mov", "mkv"],
     )
 
-    current_signature = (
-        f"{uploaded.name}:{uploaded.size}" if uploaded is not None else None
-    )
-    if current_signature != st.session_state.last_video_signature:
-        st.session_state.last_video_signature = current_signature
-        st.session_state.display_mode = "calibration"
-        st.session_state.processed_video_bytes = None
-        st.session_state.analysis_summary = None
+    input_path = None
+    if uploaded is not None:
+        current_signature = f"{uploaded.name}:{uploaded.size}"
+        if current_signature != st.session_state.last_video_signature:
+            st.session_state.last_video_signature = current_signature
+            st.session_state.display_mode = "calibration"
+            st.session_state.analysis_summary = None
+            st.session_state.last_live_frame = None
+
+        try:
+            input_path = prepare_uploaded_video(uploaded)
+            st.caption("Video pronto per l'analisi.")
+        except Exception as exc:
+            st.error(f"Errore nel caricamento locale del video: {exc}")
 
     profile_labels = {key: profile.label for key, profile in PROFILES.items()}
     selected_key = st.selectbox(
@@ -189,7 +223,6 @@ with settings_col:
     if st.button("Applica preset", use_container_width=True):
         load_profile(selected_key)
         st.session_state.display_mode = "calibration"
-        st.session_state.processed_video_bytes = None
         st.rerun()
 
     st.slider("ROI sinistra (%)", 0, 45, key="roi_left")
@@ -226,13 +259,13 @@ with viewer_col:
     with control_col1:
         if st.button("Calibra", use_container_width=True):
             st.session_state.display_mode = "calibration"
-            st.session_state.processed_video_bytes = None
+            st.session_state.last_live_frame = None
 
     with control_col2:
         can_start = bool(
             product_description.strip()
             and lot_code.strip()
-            and uploaded is not None
+            and input_path is not None
             and not invalid_roi
         )
         start_clicked = st.button(
@@ -242,120 +275,16 @@ with viewer_col:
             disabled=not can_start,
         )
 
-    if start_clicked:
-        if not DEFAULT_MODEL_PATH.exists():
-            st.error(f"Modello YOLO non trovato: {DEFAULT_MODEL_PATH}")
-        else:
-            session_id = create_session(
-                production_date=production_date,
-                product_description=product_description,
-                lot_code=lot_code,
-                profile_key=st.session_state.profile_key,
-                source_type=source_type,
-            )
-            st.session_state.active_session_id = session_id
-
-            work_dir = Path(tempfile.mkdtemp(prefix="visiontar_dashboard_"))
-            input_path = work_dir / "input.mp4"
-            annotated_path = work_dir / "elaborato.mp4"
-            input_path.write_bytes(uploaded.getvalue())
-
-            progress = st.progress(0, text="Caricamento modello YOLO...")
-            progress_note = st.empty()
-
-            def update_progress(current_frame: int, total_frames: int) -> None:
-                if total_frames > 0:
-                    ratio = min(1.0, current_frame / total_frames)
-                    progress.progress(
-                        ratio,
-                        text=f"Analisi YOLO: frame {current_frame} / {total_frames}",
-                    )
-                else:
-                    progress_note.caption(
-                        f"Analisi YOLO: frame {current_frame}"
-                    )
-
-            try:
-                process_video(
-                    video_path=input_path,
-                    model_path=DEFAULT_MODEL_PATH,
-                    test_mode=True,
-                    roi_left=st.session_state.roi_left / 100.0,
-                    roi_right=st.session_state.roi_right / 100.0,
-                    roi_top=st.session_state.roi_top / 100.0,
-                    roi_bottom=st.session_state.roi_bottom / 100.0,
-                    deadline_ratio=st.session_state.deadline_x / 100.0,
-                    show_window=False,
-                    annotated_output_path=annotated_path,
-                    progress_callback=update_progress,
-                )
-
-                progress.progress(1.0, text="Analisi completata. Registrazione risultati...")
-
-                scarti_path = input_path.with_name(
-                    f"{input_path.stem}_scarti_test.csv"
-                )
-                imported = 0
-
-                if scarti_path.exists():
-                    with scarti_path.open(
-                        "r",
-                        encoding="utf-8-sig",
-                        newline="",
-                    ) as csv_file:
-                        reader = csv.DictReader(csv_file)
-                        for row in reader:
-                            classe = (row.get("classe") or "").strip()
-                            if classe not in {"cotto", "poco", "blob", "rotto"}:
-                                continue
-
-                            inserted = add_defect_event(
-                                session_id,
-                                classe,
-                                track_id=int(row["track_id"]) if row.get("track_id") else None,
-                                confidence=float(row["confidence"]) if row.get("confidence") else None,
-                                x_px=int(float(row["x_px"])) if row.get("x_px") else None,
-                                y_px=int(float(row["y_px"])) if row.get("y_px") else None,
-                                x_norm=float(row["x_norm"]) if row.get("x_norm") else None,
-                                y_norm=float(row["y_norm"]) if row.get("y_norm") else None,
-                                frame_finale=int(float(row["frame_finale"])) if row.get("frame_finale") else None,
-                                timestamp_s=float(row["timestamp_s"]) if row.get("timestamp_s") else None,
-                            )
-                            if inserted:
-                                imported += 1
-
-                close_session(session_id)
-                st.session_state.last_closed_session_id = session_id
-                st.session_state.active_session_id = None
-                st.session_state.processed_video_bytes = (
-                    annotated_path.read_bytes() if annotated_path.exists() else None
-                )
-                st.session_state.analysis_summary = (
-                    f"Sessione #{session_id} completata · {imported} scarti registrati"
-                )
-                st.session_state.display_mode = "processed"
-                st.rerun()
-
-            except Exception as exc:
-                close_session(session_id)
-                st.session_state.active_session_id = None
-                progress.empty()
-                progress_note.empty()
-                st.error(f"Errore durante l'analisi YOLO: {exc}")
-
-    screen_left, screen_center, screen_right = st.columns([0.30, 0.40, 0.30])
+    screen_left, screen_center, screen_right = st.columns([0.31, 0.38, 0.31])
 
     with screen_center:
+        live_image = st.empty()
+        live_caption = st.empty()
+        progress_area = st.empty()
+
         if uploaded is None:
-            st.info("Carica un video di prova.")
-        elif (
-            st.session_state.display_mode == "processed"
-            and st.session_state.processed_video_bytes
-        ):
-            st.video(st.session_state.processed_video_bytes)
-            if st.session_state.analysis_summary:
-                st.success(st.session_state.analysis_summary)
-        elif frame_data is not None:
+            live_image.info("Carica un video di prova.")
+        elif frame_data is not None and st.session_state.display_mode == "calibration":
             frame, width, height, fps = frame_data
             overlay = draw_acquisition_overlay(
                 frame,
@@ -366,10 +295,138 @@ with viewer_col:
                 st.session_state.deadline_x,
                 profile.direction,
             )
-            st.image(overlay, channels="RGB", width=360)
-            st.caption(
+            live_image.image(overlay, channels="RGB", width=340)
+            live_caption.caption(
                 f"Fotogramma di calibrazione · {width} × {height} px · {fps:.2f} FPS"
             )
+        elif st.session_state.last_live_frame is not None:
+            live_image.image(
+                st.session_state.last_live_frame,
+                channels="RGB",
+                width=340,
+            )
+
+    if start_clicked:
+        if not DEFAULT_MODEL_PATH.exists():
+            st.error(f"Modello YOLO non trovato: {DEFAULT_MODEL_PATH}")
+        else:
+            prep_status = st.status("Preparazione sessione...", expanded=False)
+            prep_status.write("Video già caricato. Preparo il modello YOLO.")
+            try:
+                model = load_cached_model()
+                prep_status.update(
+                    label="Preparazione completata",
+                    state="complete",
+                    expanded=False,
+                )
+            except Exception as exc:
+                prep_status.update(label="Errore preparazione", state="error")
+                st.error(f"Impossibile caricare il modello YOLO: {exc}")
+                model = None
+
+            if model is not None:
+                st.session_state.display_mode = "running"
+                st.session_state.analysis_summary = None
+
+                progress = progress_area.progress(
+                    0,
+                    text="Analisi AI avviata...",
+                )
+
+                def update_progress(current_frame: int, total_frames: int) -> None:
+                    if total_frames > 0:
+                        progress.progress(
+                            min(1.0, current_frame / total_frames),
+                            text=f"Analisi AI · frame {current_frame} / {total_frames}",
+                        )
+
+                def update_live_frame(current_frame: int, total_frames: int, frame) -> None:
+                    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    st.session_state.last_live_frame = rgb
+                    live_image.image(rgb, channels="RGB", width=340)
+                    if total_frames > 0:
+                        live_caption.caption(
+                            f"YOLO al lavoro · frame {current_frame}/{total_frames}"
+                        )
+                    else:
+                        live_caption.caption(
+                            f"YOLO al lavoro · frame {current_frame}"
+                        )
+
+                work_dir = Path(tempfile.mkdtemp(prefix="visiontar_run_"))
+                run_input = work_dir / "input.mp4"
+                run_input.write_bytes(Path(input_path).read_bytes())
+
+                try:
+                    process_video(
+                        video_path=run_input,
+                        model_path=DEFAULT_MODEL_PATH,
+                        test_mode=True,
+                        roi_left=st.session_state.roi_left / 100.0,
+                        roi_right=st.session_state.roi_right / 100.0,
+                        roi_top=st.session_state.roi_top / 100.0,
+                        roi_bottom=st.session_state.roi_bottom / 100.0,
+                        deadline_ratio=st.session_state.deadline_x / 100.0,
+                        show_window=False,
+                        annotated_output_path=None,
+                        progress_callback=update_progress,
+                        frame_callback=update_live_frame,
+                        model_instance=model,
+                    )
+
+                    scarti_path = run_input.with_name(
+                        f"{run_input.stem}_scarti_test.csv"
+                    )
+
+                    session_id = create_session(
+                        production_date=production_date,
+                        product_description=product_description,
+                        lot_code=lot_code,
+                        profile_key=st.session_state.profile_key,
+                        source_type="File video",
+                    )
+
+                    imported = 0
+                    if scarti_path.exists():
+                        with scarti_path.open(
+                            "r",
+                            encoding="utf-8-sig",
+                            newline="",
+                        ) as csv_file:
+                            reader = csv.DictReader(csv_file)
+                            for row in reader:
+                                classe = (row.get("classe") or "").strip()
+                                if classe not in {"cotto", "poco", "blob", "rotto"}:
+                                    continue
+
+                                inserted = add_defect_event(
+                                    session_id,
+                                    classe,
+                                    track_id=int(row["track_id"]) if row.get("track_id") else None,
+                                    confidence=float(row["confidence"]) if row.get("confidence") else None,
+                                    x_px=int(float(row["x_px"])) if row.get("x_px") else None,
+                                    y_px=int(float(row["y_px"])) if row.get("y_px") else None,
+                                    x_norm=float(row["x_norm"]) if row.get("x_norm") else None,
+                                    y_norm=float(row["y_norm"]) if row.get("y_norm") else None,
+                                    frame_finale=int(float(row["frame_finale"])) if row.get("frame_finale") else None,
+                                    timestamp_s=float(row["timestamp_s"]) if row.get("timestamp_s") else None,
+                                )
+                                if inserted:
+                                    imported += 1
+
+                    close_session(session_id)
+                    st.session_state.last_closed_session_id = session_id
+                    st.session_state.analysis_summary = (
+                        f"Sessione #{session_id} completata · {imported} scarti registrati"
+                    )
+                    st.session_state.display_mode = "processed"
+                    progress.progress(1.0, text="Analisi completata")
+                    st.rerun()
+
+                except Exception as exc:
+                    progress_area.empty()
+                    st.session_state.display_mode = "calibration"
+                    st.error(f"Errore durante l'analisi YOLO: {exc}")
 
 st.divider()
 
@@ -398,20 +455,21 @@ with status_col:
     else:
         st.caption(
             "Calibra il video e premi Avvia sessione. "
-            "YOLO verrà eseguito automaticamente."
+            "Durante l'analisi vedrai YOLO lavorare sul video."
         )
 
 with report_col:
-    st.markdown("#### Report per lotto")
+    st.markdown("#### Report lotto")
 
-    report_rows = build_lot_report_rows()
-    if report_rows:
+    if summary_session_id is not None:
+        session = get_session(summary_session_id)
+        summary = get_session_summary(summary_session_id)
+
         output = io.StringIO()
         fieldnames = [
             "production_date",
             "product_description",
             "lot_code",
-            "sessions",
             "totale_scarti",
             "cotto",
             "poco",
@@ -420,14 +478,30 @@ with report_col:
         ]
         writer = csv.DictWriter(output, fieldnames=fieldnames)
         writer.writeheader()
-        writer.writerows(report_rows)
+        writer.writerow(
+            {
+                "production_date": session["production_date"],
+                "product_description": session["product_description"],
+                "lot_code": session["lot_code"],
+                "totale_scarti": summary["totale_scarti"],
+                "cotto": summary["cotto"],
+                "poco": summary["poco"],
+                "blob": summary["blob"],
+                "rotto": summary["rotto"],
+            }
+        )
+
+        lot_file_name = (
+            f"lotto_{safe_name(session['lot_code'])}_"
+            f"{safe_name(session['product_description'])}.csv"
+        )
 
         st.download_button(
-            "Scarica report_lotti.csv",
+            f"Scarica {lot_file_name}",
             data=output.getvalue().encode("utf-8-sig"),
-            file_name="report_lotti.csv",
+            file_name=lot_file_name,
             mime="text/csv",
             use_container_width=True,
         )
     else:
-        st.caption("Il report sarà disponibile dopo il primo lotto.")
+        st.caption("Il report sarà disponibile al termine della sessione.")
