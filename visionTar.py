@@ -850,6 +850,9 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
         "track_aspect": track_aspect,
         "track_extent": track_extent,
         "strong_shape_override": strong_shape_override,
+        "rotto_observations": rotto_observations,
+        "rotto_avg_confidence": rotto_avg_confidence,
+        "rotto_score_ratio": rotto_score_ratio,
     }
 
 
