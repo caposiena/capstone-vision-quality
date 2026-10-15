@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+import io
 import os
 import tempfile
 from pathlib import Path
@@ -8,8 +10,16 @@ import cv2
 import streamlit as st
 
 from acquisition_config import DEFAULT_PROFILE_KEY, PROFILES
-from database import close_session, create_session, get_session, get_session_summary, init_db
-from video_source import open_stream, open_usb_camera, open_video_file
+from database import (
+    add_defect_event,
+    build_lot_report_rows,
+    close_session,
+    create_session,
+    get_session,
+    get_session_summary,
+    init_db,
+)
+from video_source import open_video_file
 
 
 st.set_page_config(
@@ -115,28 +125,6 @@ def read_uploaded_video_frame(uploaded_file):
             os.unlink(temp_path)
 
 
-def read_camera_frame(index: int):
-    source = open_usb_camera(index)
-    try:
-        ok, frame = source.read()
-        if not ok:
-            raise RuntimeError("La videocamera è stata aperta ma non ha restituito un frame.")
-        return frame, source.width, source.height, source.fps
-    finally:
-        source.release()
-
-
-def read_stream_frame(url: str):
-    source = open_stream(url)
-    try:
-        ok, frame = source.read()
-        if not ok:
-            raise RuntimeError("Lo stream è stato aperto ma non ha restituito un frame.")
-        return frame, source.width, source.height, source.fps
-    finally:
-        source.release()
-
-
 init_db()
 init_state()
 
@@ -167,23 +155,9 @@ with meta_col3:
 left_col, preview_col = st.columns([0.36, 0.64], gap="large")
 
 with left_col:
-    st.subheader("Sorgente video")
-    source_type = st.radio(
-        "Tipo di sorgente",
-        ["File video", "Videocamera USB", "Stream RTSP / IP"],
-        horizontal=False,
-    )
-
-    uploaded = None
-    camera_index = 0
-    stream_url = ""
-
-    if source_type == "File video":
-        uploaded = st.file_uploader("Video di prova", type=["mp4", "avi", "mov", "mkv"])
-    elif source_type == "Videocamera USB":
-        camera_index = int(st.number_input("Indice videocamera", min_value=0, max_value=10, value=0, step=1))
-    else:
-        stream_url = st.text_input("URL stream", placeholder="rtsp://...")
+    st.subheader("Video di prova")
+    source_type = "File video"
+    uploaded = st.file_uploader("Seleziona video", type=["mp4", "avi", "mov", "mkv"])
 
     st.subheader("Calibrazione acquisizione")
 
@@ -256,10 +230,7 @@ with preview_col:
     try:
         if source_type == "File video" and uploaded is not None:
             frame_data = read_uploaded_video_frame(uploaded)
-        elif source_type == "Videocamera USB" and st.button("Leggi frame dalla videocamera"):
-            frame_data = read_camera_frame(camera_index)
-        elif source_type == "Stream RTSP / IP" and stream_url and st.button("Leggi frame dallo stream"):
-            frame_data = read_stream_frame(stream_url)
+
     except Exception as exc:
         st.error(str(exc))
 
@@ -278,8 +249,8 @@ with preview_col:
         st.caption(f"Sorgente: {width} × {height} px | FPS rilevati: {fps:.2f}")
     else:
         st.markdown(
-            "Seleziona un file oppure leggi un frame dalla videocamera/stream. "
-            "La stessa interfaccia verrà usata per il video live durante l'inferenza."
+            "Seleziona uno dei video di prova per verificare ROI e deadline. "
+            "Il collegamento a una videocamera resta uno sviluppo successivo."
         )
 
 st.divider()
@@ -307,9 +278,65 @@ if summary_session_id is not None:
 else:
     st.caption("Il contatore sarà disponibile dopo l'avvio della prima sessione.")
 
-st.subheader("Uscita verso il futuro sistema di scarto")
-st.write(
-    "Vengono registrati solo i pezzi difettosi (cotto, poco, blob, rotto). "
-    "Per ogni evento sono previste classe, confidence, coordinate in pixel e normalizzate, "
-    "frame e timestamp. Il collegamento fisico a encoder/attuatore resta separato dal Capstone."
-)
+st.subheader("Importazione risultati video")
+
+if st.session_state.active_session_id is not None:
+    scarti_file = st.file_uploader(
+        "Importa il file *_scarti.csv prodotto da visionTar",
+        type=["csv"],
+        key="scarti_csv",
+    )
+    if scarti_file is not None and st.button("Importa scarti nella sessione"):
+        text_data = scarti_file.getvalue().decode("utf-8-sig")
+        reader = csv.DictReader(io.StringIO(text_data))
+        imported = 0
+        for row in reader:
+            classe = (row.get("classe") or "").strip()
+            if classe not in {"cotto", "poco", "blob", "rotto"}:
+                continue
+            add_defect_event(
+                st.session_state.active_session_id,
+                classe,
+                track_id=int(row["track_id"]) if row.get("track_id") else None,
+                confidence=float(row["confidence"]) if row.get("confidence") else None,
+                x_px=int(float(row["x_px"])) if row.get("x_px") else None,
+                y_px=int(float(row["y_px"])) if row.get("y_px") else None,
+                x_norm=float(row["x_norm"]) if row.get("x_norm") else None,
+                y_norm=float(row["y_norm"]) if row.get("y_norm") else None,
+                frame_finale=int(float(row["frame_finale"])) if row.get("frame_finale") else None,
+                timestamp_s=float(row["timestamp_s"]) if row.get("timestamp_s") else None,
+            )
+            imported += 1
+        st.success(f"Importati {imported} scarti.")
+        st.rerun()
+else:
+    st.caption("Avvia prima una sessione di lotto per importare i risultati del video.")
+
+st.subheader("Report per lotto")
+
+report_rows = build_lot_report_rows()
+if report_rows:
+    output = io.StringIO()
+    fieldnames = [
+        "production_date",
+        "product_description",
+        "lot_code",
+        "sessions",
+        "totale_scarti",
+        "cotto",
+        "poco",
+        "blob",
+        "rotto",
+    ]
+    writer = csv.DictWriter(output, fieldnames=fieldnames)
+    writer.writeheader()
+    writer.writerows(report_rows)
+    st.download_button(
+        "Scarica report_lotti.csv",
+        data=output.getvalue().encode("utf-8-sig"),
+        file_name="report_lotti.csv",
+        mime="text/csv",
+        use_container_width=True,
+    )
+else:
+    st.caption("Il report sarà disponibile dopo la registrazione del primo lotto.")
