@@ -10,7 +10,7 @@ import cv2
 import streamlit as st
 from ultralytics import YOLO
 
-from acquisition_config import DEFAULT_PROFILE_KEY, PROFILES
+from acquisition_config import DEFAULT_PROFILE_KEY, DEFAULT_TRAPDOOR_COUNT, PROFILES
 from database import (
     add_defect_event,
     build_lot_report_rows,
@@ -59,7 +59,16 @@ def load_profile(key: str) -> None:
     st.session_state.deadline_x = values["deadline"]
 
 
-def draw_acquisition_overlay(frame, left: int, right: int, top: int, bottom: int, deadline: int, direction: str):
+def draw_acquisition_overlay(
+    frame,
+    left: int,
+    right: int,
+    top: int,
+    bottom: int,
+    deadline: int,
+    direction: str,
+    trapdoor_count: int,
+):
     output = frame.copy()
     height, width = output.shape[:2]
 
@@ -72,6 +81,11 @@ def draw_acquisition_overlay(frame, left: int, right: int, top: int, bottom: int
 
     cv2.rectangle(output, (x1, y1), (x2, y2), (220, 220, 220), 2)
     cv2.line(output, (deadline_x, y1), (deadline_x, y2), (255, 0, 255), 2)
+
+    gates = max(1, int(trapdoor_count))
+    for gate_idx in range(1, gates):
+        gate_y = y1 + int((y2 - y1) * gate_idx / gates)
+        cv2.line(output, (x1, gate_y), (x2, gate_y), (150, 150, 150), 1)
 
     arrow_y = max(25, y1 - 25)
     if direction == "rtl":
@@ -166,6 +180,12 @@ if "last_video_signature" not in st.session_state:
     st.session_state.last_video_signature = None
 if "last_live_frame" not in st.session_state:
     st.session_state.last_live_frame = None
+if "trapdoor_count" not in st.session_state:
+    st.session_state.trapdoor_count = DEFAULT_TRAPDOOR_COUNT
+if "machine_events_bytes" not in st.session_state:
+    st.session_state.machine_events_bytes = None
+if "machine_events_filename" not in st.session_state:
+    st.session_state.machine_events_filename = None
 
 st.title("visionTar")
 st.caption("Controllo qualità visivo - baseline V1")
@@ -230,6 +250,14 @@ with settings_col:
     st.slider("ROI alto (%)", 0, 45, key="roi_top")
     st.slider("ROI basso (%)", 0, 45, key="roi_bottom")
     st.slider("Deadline X (%)", 0, 100, key="deadline_x")
+    st.number_input(
+        "Numero botole trasversali",
+        min_value=2,
+        max_value=32,
+        step=1,
+        key="trapdoor_count",
+        help="Suddivide la larghezza utile del nastro in zone di scarto.",
+    )
 
     invalid_roi = (
         st.session_state.roi_left + st.session_state.roi_right >= 90
@@ -294,6 +322,7 @@ with viewer_col:
                 st.session_state.roi_bottom,
                 st.session_state.deadline_x,
                 profile.direction,
+                st.session_state.trapdoor_count,
             )
             live_image.image(overlay, channels="RGB", width=340)
             live_caption.caption(
@@ -387,6 +416,7 @@ with viewer_col:
                         progress_callback=update_progress,
                         frame_callback=update_live_frame,
                         model_instance=model,
+                        trapdoor_count=st.session_state.trapdoor_count,
                     )
 
                     scarti_path = run_input.with_name(
@@ -403,6 +433,11 @@ with viewer_col:
 
                     imported = 0
                     if scarti_path.exists():
+                        st.session_state.machine_events_bytes = scarti_path.read_bytes()
+                        st.session_state.machine_events_filename = (
+                            f"eventi_scarto_{safe_name(lot_code)}_"
+                            f"{safe_name(product_description)}.csv"
+                        )
                         with scarti_path.open(
                             "r",
                             encoding="utf-8-sig",
@@ -518,5 +553,17 @@ with report_col:
             mime="text/csv",
             use_container_width=True,
         )
+
+        if (
+            st.session_state.machine_events_bytes
+            and st.session_state.machine_events_filename
+        ):
+            st.download_button(
+                f"Scarica {st.session_state.machine_events_filename}",
+                data=st.session_state.machine_events_bytes,
+                file_name=st.session_state.machine_events_filename,
+                mime="text/csv",
+                use_container_width=True,
+            )
     else:
         st.caption("Il report sarà disponibile al termine della sessione.")
