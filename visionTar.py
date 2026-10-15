@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 1.2
+Versione 1.3
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -56,7 +56,11 @@ TRACK_OBSERVATION_WINDOW = 12
 TRACK_MIN_FINAL_OBSERVATIONS = 4
 TRACK_MIN_VOTE_SHARE = 0.55
 DEFECT_BINARY_THRESHOLD = 0.40
+DEFECT_BINARY_THRESHOLD_SENSITIVE = 0.30
 DEFECT_CLASS_MIN_SHARE = 0.38
+SENSITIVE_DEFECT_CLASSES = {"cotto", "rotto"}
+SENSITIVE_MIN_OBSERVATIONS = 2
+SENSITIVE_MIN_AVG_CONFIDENCE = 0.55
 TRACK_MIN_MATCH_SCORE = 0.18
 TRACK_MAX_JUMP_RATIO = 0.06
 TRACK_MIN_CROSSING_DELTA = 4
@@ -513,6 +517,7 @@ def process_video(
                     "confidence_finale",
                     "quota_difetto",
                     "quota_classe_finale",
+                    "soglia_difetto_usata",
                 ]
             )
 
@@ -683,6 +688,7 @@ def process_video(
                             "final_state": None,
                             "defect_share": None,
                             "final_class_share": None,
+                            "defect_threshold_used": None,
                         }
                     else:
                         unmatched_track_ids.discard(best_id)
@@ -748,27 +754,42 @@ def process_video(
                                 else 0.0
                             )
 
-                            # STADIO 2: se difettoso, scegli quale difetto prevale.
-                            if defect_share >= DEFECT_BINARY_THRESHOLD and defect_score > 0:
-                                defect_ranked = sorted(
-                                    (
-                                        (label, weighted_scores.get(label, 0.0))
-                                        for label in DEFECT_CLASSES
-                                    ),
-                                    key=lambda item: item[1],
-                                    reverse=True,
-                                )
-                                final_label, top_defect_score = defect_ranked[0]
-                                defect_class_share = (
-                                    top_defect_score / defect_score
-                                    if defect_score > 0
-                                    else 0.0
-                                )
-                                final_conf = (
-                                    sum(confidences[final_label]) / len(confidences[final_label])
-                                    if confidences[final_label]
-                                    else 0.0
-                                )
+                            # STADIO 2: scegli il difetto prevalente e applica
+                            # una soglia piu sensibile solo a cotto/rotto.
+                            defect_ranked = sorted(
+                                (
+                                    (label, weighted_scores.get(label, 0.0))
+                                    for label in DEFECT_CLASSES
+                                ),
+                                key=lambda item: item[1],
+                                reverse=True,
+                            )
+                            candidate_label, top_defect_score = defect_ranked[0]
+                            defect_class_share = (
+                                top_defect_score / defect_score
+                                if defect_score > 0
+                                else 0.0
+                            )
+
+                            candidate_confidences = confidences[candidate_label]
+                            candidate_observations = len(candidate_confidences)
+                            candidate_avg_confidence = (
+                                sum(candidate_confidences) / candidate_observations
+                                if candidate_observations > 0
+                                else 0.0
+                            )
+
+                            defect_threshold = DEFECT_BINARY_THRESHOLD
+                            if (
+                                candidate_label in SENSITIVE_DEFECT_CLASSES
+                                and candidate_observations >= SENSITIVE_MIN_OBSERVATIONS
+                                and candidate_avg_confidence >= SENSITIVE_MIN_AVG_CONFIDENCE
+                            ):
+                                defect_threshold = DEFECT_BINARY_THRESHOLD_SENSITIVE
+
+                            if defect_share >= defect_threshold and defect_score > 0:
+                                final_label = candidate_label
+                                final_conf = candidate_avg_confidence
 
                                 if defect_class_share < DEFECT_CLASS_MIN_SHARE:
                                     final_label = "incerto"
@@ -794,6 +815,11 @@ def process_video(
                         )
                         track["final_class_share"] = (
                             defect_class_share
+                            if len(observations) >= TRACK_MIN_FINAL_OBSERVATIONS
+                            else 0.0
+                        )
+                        track["defect_threshold_used"] = (
+                            defect_threshold
                             if len(observations) >= TRACK_MIN_FINAL_OBSERVATIONS
                             else 0.0
                         )
@@ -866,6 +892,11 @@ def process_video(
                                 (
                                     f"{track['final_class_share']:.4f}"
                                     if track["final_class_share"] is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{track['defect_threshold_used']:.4f}"
+                                    if track["defect_threshold_used"] is not None
                                     else ""
                                 ),
                             ]
