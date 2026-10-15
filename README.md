@@ -116,3 +116,5 @@ La larghezza utile della ROI può essere suddivisa in un numero configurabile di
 La componente longitudinale non viene trasformata in un comando hardware nel Capstone: frame e timestamp costituiscono il riferimento che un futuro encoder userà per determinare il momento di apertura delle botole.
 
 Il file tecnico scaricabile dalla dashboard è denominato `eventi_scarto_<lotto>_<prodotto>.csv`. Il report qualità per lotto resta invece sintetico e separato.
+
+La dashboard prevede due sorgenti di input: video registrato per la validazione del Capstone e videocamera USB per la futura acquisizione diretta. La modalità videocamera permette già di selezionare l'indice del dispositivo e acquisire un fotogramma di calibrazione; l'elaborazione continua live resta da validare quando sarà disponibile l'hardware.
