@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 2.2
+Versione 2.3
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -85,6 +85,8 @@ POCO_MIN_V = 212.0
 POCO_MIN_LAB_L = 198.0
 POCO_MAX_S = 105.0
 COTTO_COLOR_SUPPORTED_THRESHOLD = 0.24
+COTTO_COLOR_OVERRIDE_MIN_OBSERVATIONS = 1
+COTTO_COLOR_OVERRIDE_MIN_AVG_CONFIDENCE = 0.40
 POCO_COLOR_SUPPORTED_THRESHOLD = 0.32
 POCO_COLOR_MIN_OBSERVATIONS = 2
 
@@ -790,7 +792,11 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
     # Per "poco" il voto YOLO deve essere confermato anche dalla luminosita.
     # Se il tarallo non e abbastanza chiaro, il responso viene ricondotto a
     # "buono" invece di scartarlo sulla sola evidenza del detector.
-    if candidate_label == "poco" and track_lab_l < POCO_FINAL_MIN_LAB_L:
+    if (
+        candidate_label == "poco"
+        and defect_share >= threshold
+        and track_lab_l < POCO_FINAL_MIN_LAB_L
+    ):
         good_conf = (
             sum(confidences["buono"]) / len(confidences["buono"])
             if confidences["buono"]
@@ -804,6 +810,38 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "class_share": class_share,
             "threshold": threshold,
             "color_support": "poco_non_confermato",
+            "track_v": track_v,
+            "track_s": track_s,
+            "track_lab_l": track_lab_l,
+            "shape_support": shape_support,
+            "shape_anomalies": shape_anomalies,
+            "track_circularity": track_circularity,
+            "track_solidity": track_solidity,
+            "track_aspect": track_aspect,
+            "track_extent": track_extent,
+            "strong_shape_override": strong_shape_override,
+            "rotto_observations": rotto_observations,
+            "rotto_avg_confidence": rotto_avg_confidence,
+            "rotto_score_ratio": rotto_score_ratio,
+        }
+
+    # Conferma colore forte per "cotto": nel video 2 i tre falsi negativi
+    # residui hanno profilo colore coerente con i tre cotto gia riconosciuti.
+    # L'override resta vincolato a una vera osservazione YOLO di cotto.
+    if (
+        candidate_label == "cotto"
+        and color_support == "cotto"
+        and candidate_observations >= COTTO_COLOR_OVERRIDE_MIN_OBSERVATIONS
+        and candidate_avg_confidence >= COTTO_COLOR_OVERRIDE_MIN_AVG_CONFIDENCE
+    ):
+        return {
+            "label": "cotto",
+            "confidence": candidate_avg_confidence,
+            "state": "FINALE",
+            "defect_share": defect_share,
+            "class_share": class_share,
+            "threshold": COTTO_COLOR_SUPPORTED_THRESHOLD,
+            "color_support": "cotto_forte",
             "track_v": track_v,
             "track_s": track_s,
             "track_lab_l": track_lab_l,
