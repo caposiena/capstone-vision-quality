@@ -28,7 +28,7 @@ import csv
 import math
 from collections import defaultdict, deque
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 import tkinter as tk
 from tkinter import filedialog, messagebox
 
@@ -983,13 +983,15 @@ def process_video(
     show_window: bool = True,
     annotated_output_path: Path | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
+    frame_callback: Callable[[int, int, Any], None] | None = None,
+    model_instance: Any | None = None,
 ) -> Path:
     """Analizza il video e salva su CSV le coordinate delle detection."""
 
     print(f"Caricamento modello YOLO: {model_path}")
     print(f"Modalita: {'TEST - tutte le detection' if test_mode else 'NORMALE - soli difetti'}")
 
-    model = YOLO(str(model_path))
+    model = model_instance if model_instance is not None else YOLO(str(model_path))
 
     print(f"Apertura video: {video_path}")
     capture = cv2.VideoCapture(str(video_path))
@@ -1762,6 +1764,13 @@ def process_video(
 
                 if annotated_writer is not None:
                     annotated_writer.write(frame)
+
+                if frame_callback is not None and (
+                    frame_number == 1
+                    or frame_number % 2 == 0
+                    or (total_frames > 0 and frame_number >= total_frames)
+                ):
+                    frame_callback(frame_number, total_frames, frame.copy())
 
                 if show_window:
                     cv2.imshow(window_name, frame)
