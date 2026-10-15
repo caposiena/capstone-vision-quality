@@ -1358,7 +1358,7 @@ def process_video(
                             track["track_solidity"] = float(verdict["track_solidity"])
                             track["track_aspect"] = float(verdict["track_aspect"])
                             track["track_extent"] = float(verdict["track_extent"])
-                        track["strong_shape_override"] = bool(verdict["strong_shape_override"])
+                            track["strong_shape_override"] = bool(verdict["strong_shape_override"])
                             recent_final = (
                                 track_id,
                                 track["final_label"],
