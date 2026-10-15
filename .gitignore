@@ -7,8 +7,11 @@ __pycache__/
 
 # Dataset e output di training locali
 dataset/
+taralli_yolo_v2/
 runs/
 
 # Output locali
 *_difetti.csv
 *_detections_test.csv
+*_finali_test.csv
+*_finali.csv
