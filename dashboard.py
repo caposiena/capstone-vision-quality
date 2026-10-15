@@ -152,41 +152,40 @@ with meta_col3:
         placeholder="Es. L251015A",
     )
 
-left_col, preview_col = st.columns([0.36, 0.64], gap="large")
+left_col, preview_col = st.columns([0.25, 0.75], gap="medium")
 
 with left_col:
     st.subheader("Video di prova")
     source_type = "File video"
     uploaded = st.file_uploader("Seleziona video", type=["mp4", "avi", "mov", "mkv"])
 
-    st.subheader("Calibrazione acquisizione")
+    with st.expander("Calibrazione ROI / deadline", expanded=False):
+        profile_labels = {key: profile.label for key, profile in PROFILES.items()}
+        selected_key = st.selectbox(
+            "Profilo",
+            options=list(PROFILES.keys()),
+            format_func=lambda key: profile_labels[key],
+            index=list(PROFILES.keys()).index(st.session_state.profile_key),
+        )
 
-    profile_labels = {key: profile.label for key, profile in PROFILES.items()}
-    selected_key = st.selectbox(
-        "Profilo",
-        options=list(PROFILES.keys()),
-        format_func=lambda key: profile_labels[key],
-        index=list(PROFILES.keys()).index(st.session_state.profile_key),
-    )
+        if st.button("Carica preset", use_container_width=True):
+            load_profile(selected_key)
+            st.rerun()
 
-    if st.button("Carica preset", use_container_width=True):
-        load_profile(selected_key)
-        st.rerun()
+        st.slider("ROI sinistra (%)", 0, 45, key="roi_left")
+        st.slider("ROI destra (%)", 0, 45, key="roi_right")
+        st.slider("ROI alto (%)", 0, 45, key="roi_top")
+        st.slider("ROI basso (%)", 0, 45, key="roi_bottom")
+        st.slider("Deadline X (%)", 0, 100, key="deadline_x")
 
-    st.slider("ROI sinistra (%)", 0, 45, key="roi_left")
-    st.slider("ROI destra (%)", 0, 45, key="roi_right")
-    st.slider("ROI alto (%)", 0, 45, key="roi_top")
-    st.slider("ROI basso (%)", 0, 45, key="roi_bottom")
-    st.slider("Deadline X (%)", 0, 100, key="deadline_x")
-
-    if st.session_state.roi_left + st.session_state.roi_right >= 90:
-        st.error("ROI orizzontale non valida: sinistra + destra deve essere inferiore al 90%.")
-    if st.session_state.roi_top + st.session_state.roi_bottom >= 90:
-        st.error("ROI verticale non valida: alto + basso deve essere inferiore al 90%.")
+        if st.session_state.roi_left + st.session_state.roi_right >= 90:
+            st.error("ROI orizzontale non valida: sinistra + destra deve essere inferiore al 90%.")
+        if st.session_state.roi_top + st.session_state.roi_bottom >= 90:
+            st.error("ROI verticale non valida: alto + basso deve essere inferiore al 90%.")
 
     profile = PROFILES[st.session_state.profile_key]
     direction_label = "destra → sinistra" if profile.direction == "rtl" else "sinistra → destra"
-    st.caption(f"Direzione nastro del preset: {direction_label}")
+    st.caption(f"Profilo attivo: {profile.label} · {direction_label}")
 
     st.subheader("Sessione di controllo")
 
@@ -224,15 +223,16 @@ with left_col:
             st.rerun()
 
 with preview_col:
-    st.subheader("Anteprima acquisizione")
+    st.subheader("Video di prova")
 
     frame_data = None
-    try:
-        if source_type == "File video" and uploaded is not None:
-            frame_data = read_uploaded_video_frame(uploaded)
+    if uploaded is not None:
+        st.video(uploaded.getvalue())
 
-    except Exception as exc:
-        st.error(str(exc))
+        try:
+            frame_data = read_uploaded_video_frame(uploaded)
+        except Exception as exc:
+            st.error(f"Impossibile leggere il frame di calibrazione: {exc}")
 
     if frame_data is not None:
         frame, width, height, fps = frame_data
@@ -245,12 +245,13 @@ with preview_col:
             st.session_state.deadline_x,
             profile.direction,
         )
-        st.image(overlay, channels="RGB", use_container_width=True)
-        st.caption(f"Sorgente: {width} × {height} px | FPS rilevati: {fps:.2f}")
+
+        with st.expander("Mostra anteprima ROI / deadline", expanded=False):
+            st.image(overlay, channels="RGB", width=520)
+            st.caption(f"{width} × {height} px | FPS rilevati: {fps:.2f}")
     else:
-        st.markdown(
-            "Seleziona uno dei video di prova per verificare ROI e deadline. "
-            "Il collegamento a una videocamera resta uno sviluppo successivo."
+        st.caption(
+            "Seleziona un video MP4 per riprodurlo e verificare la configurazione."
         )
 
 st.divider()
