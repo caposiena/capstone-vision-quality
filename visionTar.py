@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 1.7
+Versione 1.8
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -96,6 +96,15 @@ ROTTO_MAX_ASPECT = 1.38
 ROTTO_MAX_EXTENT = 0.55
 ROTTO_MIN_ANOMALY_SIGNALS = 2
 ROTTO_SHAPE_SUPPORTED_THRESHOLD = 0.24
+
+# Override geometrico forte: puo recuperare un "rotto" anche quando il voto
+# complessivo resta dominato da "buono", ma solo con evidenza molto netta.
+ROTTO_STRONG_MIN_ANOMALIES = 3
+ROTTO_STRONG_MAX_CIRCULARITY = 0.55
+ROTTO_STRONG_MAX_SOLIDITY = 0.82
+ROTTO_STRONG_MIN_OBSERVATIONS = 1
+ROTTO_STRONG_MIN_AVG_CONFIDENCE = 0.45
+ROTTO_STRONG_THRESHOLD = 0.12
 
 
 def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float, float] | None:
@@ -585,6 +594,7 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "track_solidity": 0.0,
             "track_aspect": 0.0,
             "track_extent": 0.0,
+            "strong_shape_override": False,
         }
 
     weighted_scores = defaultdict(float)
@@ -694,6 +704,7 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
 
     shape_support = "nessuno"
     shape_anomalies = 0
+    strong_shape_override = False
     if candidate_label == "rotto":
         shape_anomalies += int(track_circularity <= ROTTO_MAX_CIRCULARITY)
         shape_anomalies += int(track_solidity <= ROTTO_MAX_SOLIDITY)
@@ -705,6 +716,21 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
         if shape_anomalies >= ROTTO_MIN_ANOMALY_SIGNALS:
             shape_support = "rotto"
             threshold = min(threshold, ROTTO_SHAPE_SUPPORTED_THRESHOLD)
+
+        strong_shape_override = (
+            shape_anomalies >= ROTTO_STRONG_MIN_ANOMALIES
+            and (
+                track_circularity <= ROTTO_STRONG_MAX_CIRCULARITY
+                or track_solidity <= ROTTO_STRONG_MAX_SOLIDITY
+            )
+            and candidate_observations >= ROTTO_STRONG_MIN_OBSERVATIONS
+            and candidate_avg_confidence >= ROTTO_STRONG_MIN_AVG_CONFIDENCE
+            and color_support == "nessuno"
+        )
+
+        if strong_shape_override:
+            shape_support = "rotto_forte"
+            threshold = min(threshold, ROTTO_STRONG_THRESHOLD)
 
     if defect_share >= threshold and defect_score > 0:
         if class_share < DEFECT_CLASS_MIN_SHARE:
@@ -725,6 +751,7 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
                 "track_solidity": track_solidity,
                 "track_aspect": track_aspect,
                 "track_extent": track_extent,
+                "strong_shape_override": strong_shape_override,
             }
         return {
             "label": candidate_label,
@@ -743,6 +770,7 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "track_solidity": track_solidity,
             "track_aspect": track_aspect,
             "track_extent": track_extent,
+            "strong_shape_override": strong_shape_override,
         }
 
     good_conf = (
@@ -894,6 +922,7 @@ def process_video(
                     "track_solidity_median",
                     "track_aspect_median",
                     "track_extent_median",
+                    "override_forma_forte",
                 ]
             )
 
@@ -1078,6 +1107,7 @@ def process_video(
                             "track_solidity": None,
                             "track_aspect": None,
                             "track_extent": None,
+                            "strong_shape_override": None,
                         }
                     else:
                         unmatched_track_ids.discard(best_id)
@@ -1142,6 +1172,7 @@ def process_video(
                         track["track_solidity"] = float(verdict["track_solidity"])
                         track["track_aspect"] = float(verdict["track_aspect"])
                         track["track_extent"] = float(verdict["track_extent"])
+                        track["strong_shape_override"] = bool(verdict["strong_shape_override"])
                         recent_final = (best_id, final_label, final_conf)
                         recent_final_until = frame_number + 20
 
@@ -1270,6 +1301,11 @@ def process_video(
                                     if track["track_extent"] is not None
                                     else ""
                                 ),
+                                (
+                                    int(track["strong_shape_override"])
+                                    if track["strong_shape_override"] is not None
+                                    else ""
+                                ),
                             ]
                         )
                         saved_rows += 1
@@ -1321,6 +1357,7 @@ def process_video(
                             track["track_solidity"] = float(verdict["track_solidity"])
                             track["track_aspect"] = float(verdict["track_aspect"])
                             track["track_extent"] = float(verdict["track_extent"])
+                        track["strong_shape_override"] = bool(verdict["strong_shape_override"])
                             recent_final = (
                                 track_id,
                                 track["final_label"],
