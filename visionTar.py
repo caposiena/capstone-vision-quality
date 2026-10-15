@@ -979,6 +979,8 @@ def process_video(
     roi_top: float = ROI_TOP_RATIO,
     roi_bottom: float = ROI_BOTTOM_RATIO,
     deadline_ratio: float = DEADLINE_X_RATIO,
+    show_window: bool = True,
+    annotated_output_path: Path | None = None,
 ) -> Path:
     """Analizza il video e salva su CSV le coordinate delle detection."""
 
@@ -1005,14 +1007,30 @@ def process_video(
     saved_rows = 0
 
     window_name = "visionTar - Q o ESC per terminare"
-    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    if show_window:
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
 
-    # Slider LIVE: modificano realmente la ROI durante la riproduzione.
-    cv2.createTrackbar("Sinistra %", window_name, int(roi_left * 100), 45, lambda _v: None)
-    cv2.createTrackbar("Destra %", window_name, int(roi_right * 100), 45, lambda _v: None)
-    cv2.createTrackbar("Alto %", window_name, int(roi_top * 100), 45, lambda _v: None)
-    cv2.createTrackbar("Basso %", window_name, int(roi_bottom * 100), 45, lambda _v: None)
-    cv2.createTrackbar("Deadline X %", window_name, int(deadline_ratio * 100), 100, lambda _v: None)
+        # Slider LIVE: modificano realmente la ROI durante la riproduzione.
+        cv2.createTrackbar("Sinistra %", window_name, int(roi_left * 100), 45, lambda _v: None)
+        cv2.createTrackbar("Destra %", window_name, int(roi_right * 100), 45, lambda _v: None)
+        cv2.createTrackbar("Alto %", window_name, int(roi_top * 100), 45, lambda _v: None)
+        cv2.createTrackbar("Basso %", window_name, int(roi_bottom * 100), 45, lambda _v: None)
+        cv2.createTrackbar("Deadline X %", window_name, int(deadline_ratio * 100), 100, lambda _v: None)
+
+    annotated_writer = None
+    if annotated_output_path is not None:
+        frame_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+        frame_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps_for_writer = video_fps if video_fps > 0 else 25.0
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        annotated_writer = cv2.VideoWriter(
+            str(annotated_output_path),
+            fourcc,
+            fps_for_writer,
+            (frame_width, frame_height),
+        )
+        if not annotated_writer.isOpened():
+            raise RuntimeError(f"Impossibile creare il video elaborato: {annotated_output_path}")
 
     tracks = {}
     next_track_id = 1
@@ -1200,20 +1218,29 @@ def process_video(
 
                 frame_height, frame_width = frame.shape[:2]
 
-                # Legge gli slider ad ogni frame: la ROI cambia in tempo reale.
-                live_left = cv2.getTrackbarPos("Sinistra %", window_name) / 100.0
-                live_right = cv2.getTrackbarPos("Destra %", window_name) / 100.0
-                live_top = cv2.getTrackbarPos("Alto %", window_name) / 100.0
-                live_bottom = cv2.getTrackbarPos("Basso %", window_name) / 100.0
-                live_deadline = cv2.getTrackbarPos("Deadline X %", window_name) / 100.0
+                if show_window:
+                    # Legge gli slider ad ogni frame: la ROI cambia in tempo reale.
+                    live_left = cv2.getTrackbarPos("Sinistra %", window_name) / 100.0
+                    live_right = cv2.getTrackbarPos("Destra %", window_name) / 100.0
+                    live_top = cv2.getTrackbarPos("Alto %", window_name) / 100.0
+                    live_bottom = cv2.getTrackbarPos("Basso %", window_name) / 100.0
+                    live_deadline = cv2.getTrackbarPos("Deadline X %", window_name) / 100.0
+                else:
+                    live_left = roi_left
+                    live_right = roi_right
+                    live_top = roi_top
+                    live_bottom = roi_bottom
+                    live_deadline = deadline_ratio
 
                 # Evita ROI invalide anche durante la regolazione live.
                 if live_left + live_right >= 0.90:
                     live_right = max(0.0, 0.89 - live_left)
-                    cv2.setTrackbarPos("Destra %", window_name, int(live_right * 100))
+                    if show_window:
+                        cv2.setTrackbarPos("Destra %", window_name, int(live_right * 100))
                 if live_top + live_bottom >= 0.90:
                     live_bottom = max(0.0, 0.89 - live_top)
-                    cv2.setTrackbarPos("Basso %", window_name, int(live_bottom * 100))
+                    if show_window:
+                        cv2.setTrackbarPos("Basso %", window_name, int(live_bottom * 100))
 
                 roi_x1 = int(frame_width * live_left)
                 roi_x2 = int(frame_width * (1.0 - live_right))
@@ -1231,7 +1258,7 @@ def process_video(
                 deadline_x = max(min_deadline_x, min(roi_x2 - 5, deadline_x))
 
                 effective_deadline_pct = int(round(deadline_x * 100 / frame_width))
-                if cv2.getTrackbarPos("Deadline X %", window_name) != effective_deadline_pct:
+                if show_window and cv2.getTrackbarPos("Deadline X %", window_name) != effective_deadline_pct:
                     cv2.setTrackbarPos(
                         "Deadline X %",
                         window_name,
@@ -1723,17 +1750,23 @@ def process_video(
                     cv2.LINE_AA,
                 )
 
-                cv2.imshow(window_name, frame)
+                if annotated_writer is not None:
+                    annotated_writer.write(frame)
 
-                key = cv2.waitKey(1) & 0xFF
+                if show_window:
+                    cv2.imshow(window_name, frame)
+                    key = cv2.waitKey(1) & 0xFF
 
-                if key in (27, ord("q")):
-                    print("Analisi interrotta dall'utente.")
-                    break
+                    if key in (27, ord("q")):
+                        print("Analisi interrotta dall'utente.")
+                        break
 
     finally:
         capture.release()
-        cv2.destroyAllWindows()
+        if annotated_writer is not None:
+            annotated_writer.release()
+        if show_window:
+            cv2.destroyAllWindows()
 
     print(f"Righe salvate nel CSV detection: {saved_rows}")
     print(f"File detection: {output_path}")
