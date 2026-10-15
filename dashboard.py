@@ -128,16 +128,13 @@ def read_uploaded_video_frame(uploaded_file):
 init_db()
 init_state()
 
+if "display_mode" not in st.session_state:
+    st.session_state.display_mode = "calibration"
+
 st.title("visionTar")
 st.caption("Controllo qualità visivo - baseline V1")
 
-st.info(
-    "Le regolazioni in questa pagina riguardano solo acquisizione, ROI e deadline. "
-    "Le soglie di classificazione della baseline V1 restano congelate."
-)
-
 st.subheader("Dati produzione")
-
 meta_col1, meta_col2, meta_col3 = st.columns([0.22, 0.48, 0.30])
 with meta_col1:
     production_date = st.date_input("Data produzione")
@@ -152,45 +149,106 @@ with meta_col3:
         placeholder="Es. L251015A",
     )
 
-left_col, preview_col = st.columns([0.25, 0.75], gap="medium")
+st.divider()
 
-with left_col:
-    st.subheader("Video di prova")
+settings_col, viewer_col = st.columns([0.34, 0.66], gap="large")
+
+with settings_col:
+    st.markdown("#### Impostazioni video")
+
     source_type = "File video"
-    uploaded = st.file_uploader("Seleziona video", type=["mp4", "avi", "mov", "mkv"])
+    uploaded = st.file_uploader(
+        "Seleziona video di prova",
+        type=["mp4", "avi", "mov", "mkv"],
+    )
 
-    with st.expander("Calibrazione ROI / deadline", expanded=False):
-        profile_labels = {key: profile.label for key, profile in PROFILES.items()}
-        selected_key = st.selectbox(
-            "Profilo",
-            options=list(PROFILES.keys()),
-            format_func=lambda key: profile_labels[key],
-            index=list(PROFILES.keys()).index(st.session_state.profile_key),
-        )
+    profile_labels = {key: profile.label for key, profile in PROFILES.items()}
+    selected_key = st.selectbox(
+        "Profilo acquisizione",
+        options=list(PROFILES.keys()),
+        format_func=lambda key: profile_labels[key],
+        index=list(PROFILES.keys()).index(st.session_state.profile_key),
+    )
 
-        if st.button("Carica preset", use_container_width=True):
-            load_profile(selected_key)
-            st.rerun()
+    if st.button("Applica preset", use_container_width=True):
+        load_profile(selected_key)
+        st.session_state.display_mode = "calibration"
+        st.rerun()
 
-        st.slider("ROI sinistra (%)", 0, 45, key="roi_left")
-        st.slider("ROI destra (%)", 0, 45, key="roi_right")
-        st.slider("ROI alto (%)", 0, 45, key="roi_top")
-        st.slider("ROI basso (%)", 0, 45, key="roi_bottom")
-        st.slider("Deadline X (%)", 0, 100, key="deadline_x")
+    st.slider("ROI sinistra (%)", 0, 45, key="roi_left")
+    st.slider("ROI destra (%)", 0, 45, key="roi_right")
+    st.slider("ROI alto (%)", 0, 45, key="roi_top")
+    st.slider("ROI basso (%)", 0, 45, key="roi_bottom")
+    st.slider("Deadline X (%)", 0, 100, key="deadline_x")
 
-        if st.session_state.roi_left + st.session_state.roi_right >= 90:
-            st.error("ROI orizzontale non valida: sinistra + destra deve essere inferiore al 90%.")
-        if st.session_state.roi_top + st.session_state.roi_bottom >= 90:
-            st.error("ROI verticale non valida: alto + basso deve essere inferiore al 90%.")
+    invalid_roi = (
+        st.session_state.roi_left + st.session_state.roi_right >= 90
+        or st.session_state.roi_top + st.session_state.roi_bottom >= 90
+    )
+    if invalid_roi:
+        st.error("ROI non valida: riduci i margini.")
 
     profile = PROFILES[st.session_state.profile_key]
     direction_label = "destra → sinistra" if profile.direction == "rtl" else "sinistra → destra"
-    st.caption(f"Profilo attivo: {profile.label} · {direction_label}")
+    st.caption(f"{profile.label} · {direction_label}")
 
-    st.subheader("Sessione di controllo")
+with viewer_col:
+    st.markdown("#### Schermata video")
+
+    frame_data = None
+    if uploaded is not None:
+        try:
+            frame_data = read_uploaded_video_frame(uploaded)
+        except Exception as exc:
+            st.error(f"Impossibile leggere il video: {exc}")
+
+    view_btn1, view_btn2, view_spacer = st.columns([0.22, 0.22, 0.56])
+    with view_btn1:
+        if st.button("Calibra", use_container_width=True):
+            st.session_state.display_mode = "calibration"
+    with view_btn2:
+        if st.button("Riproduci", use_container_width=True, disabled=uploaded is None):
+            st.session_state.display_mode = "play"
+
+    screen_left, screen_center, screen_right = st.columns([0.08, 0.84, 0.08])
+
+    with screen_center:
+        if uploaded is None:
+            st.info("Carica un video di prova.")
+        elif st.session_state.display_mode == "play":
+            st.video(uploaded.getvalue())
+            st.caption("Metti in pausa il player e torna su Calibra per modificare ROI e deadline.")
+        elif frame_data is not None:
+            frame, width, height, fps = frame_data
+            overlay = draw_acquisition_overlay(
+                frame,
+                st.session_state.roi_left,
+                st.session_state.roi_right,
+                st.session_state.roi_top,
+                st.session_state.roi_bottom,
+                st.session_state.deadline_x,
+                profile.direction,
+            )
+            st.image(overlay, channels="RGB", use_container_width=True)
+            st.caption(
+                f"Fotogramma di calibrazione · {width} × {height} px · {fps:.2f} FPS"
+            )
+
+st.divider()
+
+session_col, counters_col = st.columns([0.34, 0.66], gap="large")
+
+with session_col:
+    st.markdown("#### Sessione")
 
     if st.session_state.active_session_id is None:
-        can_start = bool(product_description.strip() and lot_code.strip())
+        can_start = bool(
+            product_description.strip()
+            and lot_code.strip()
+            and uploaded is not None
+            and not invalid_roi
+        )
+
         if st.button(
             "Avvia sessione",
             type="primary",
@@ -207,13 +265,13 @@ with left_col:
             st.rerun()
 
         if not can_start:
-            st.caption("Inserisci descrizione prodotto e lotto per avviare la sessione.")
+            st.caption("Inserisci prodotto, lotto, video e una ROI valida.")
     else:
         session = get_session(st.session_state.active_session_id)
         if session:
             st.success(
-                f"Sessione #{session['id']} attiva - "
-                f"{session['product_description']} - lotto {session['lot_code']}"
+                f"Sessione #{session['id']} · {session['product_description']} · "
+                f"lotto {session['lot_code']}"
             )
 
         if st.button("Chiudi sessione", use_container_width=True):
@@ -222,123 +280,98 @@ with left_col:
             st.session_state.active_session_id = None
             st.rerun()
 
-with preview_col:
-    st.subheader("Video di prova")
+with counters_col:
+    st.markdown("#### Contatore scarti")
 
-    frame_data = None
-    if uploaded is not None:
-        st.video(uploaded.getvalue())
+    summary_session_id = (
+        st.session_state.active_session_id
+        or st.session_state.get("last_closed_session_id")
+    )
 
-        try:
-            frame_data = read_uploaded_video_frame(uploaded)
-        except Exception as exc:
-            st.error(f"Impossibile leggere il frame di calibrazione: {exc}")
-
-    if frame_data is not None:
-        frame, width, height, fps = frame_data
-        overlay = draw_acquisition_overlay(
-            frame,
-            st.session_state.roi_left,
-            st.session_state.roi_right,
-            st.session_state.roi_top,
-            st.session_state.roi_bottom,
-            st.session_state.deadline_x,
-            profile.direction,
-        )
-
-        with st.expander("Mostra anteprima ROI / deadline", expanded=False):
-            st.image(overlay, channels="RGB", width=520)
-            st.caption(f"{width} × {height} px | FPS rilevati: {fps:.2f}")
+    if summary_session_id is not None:
+        summary = get_session_summary(summary_session_id)
+        total_col, cotto_col, poco_col, blob_col, rotto_col = st.columns(5)
+        total_col.metric("Totale", summary["totale_scarti"])
+        cotto_col.metric("Cotto", summary["cotto"])
+        poco_col.metric("Poco", summary["poco"])
+        blob_col.metric("Blob", summary["blob"])
+        rotto_col.metric("Rotto", summary["rotto"])
     else:
-        st.caption(
-            "Seleziona un video MP4 per riprodurlo e verificare la configurazione."
-        )
+        st.caption("Il conteggio comparirà dopo l'avvio della sessione.")
 
 st.divider()
-st.subheader("Contatore scarti")
 
-summary_session_id = st.session_state.active_session_id or st.session_state.get("last_closed_session_id")
-if summary_session_id is not None:
-    summary = get_session_summary(summary_session_id)
-    total_col, cotto_col, poco_col, blob_col, rotto_col = st.columns(5)
-    total_col.metric("Totale scarti", summary["totale_scarti"])
-    cotto_col.metric("Cotto", summary["cotto"])
-    poco_col.metric("Poco", summary["poco"])
-    blob_col.metric("Blob", summary["blob"])
-    rotto_col.metric("Rotto", summary["rotto"])
+import_col, report_col = st.columns([0.50, 0.50], gap="large")
 
-    summary_session = get_session(summary_session_id)
-    if summary_session:
-        stato = "chiusa" if summary_session["ended_at"] else "attiva"
-        st.caption(
-            f"Sessione #{summary_session['id']} {stato} | "
-            f"{summary_session['production_date']} | "
-            f"{summary_session['product_description']} | "
-            f"lotto {summary_session['lot_code']}"
+with import_col:
+    st.markdown("#### Importazione risultati")
+
+    if st.session_state.active_session_id is not None:
+        scarti_file = st.file_uploader(
+            "File *_scarti.csv prodotto da visionTar",
+            type=["csv"],
+            key="scarti_csv",
         )
-else:
-    st.caption("Il contatore sarà disponibile dopo l'avvio della prima sessione.")
+        if scarti_file is not None and st.button(
+            "Importa scarti",
+            use_container_width=True,
+        ):
+            text_data = scarti_file.getvalue().decode("utf-8-sig")
+            reader = csv.DictReader(io.StringIO(text_data))
+            imported = 0
 
-st.subheader("Importazione risultati video")
+            for row in reader:
+                classe = (row.get("classe") or "").strip()
+                if classe not in {"cotto", "poco", "blob", "rotto"}:
+                    continue
 
-if st.session_state.active_session_id is not None:
-    scarti_file = st.file_uploader(
-        "Importa il file *_scarti.csv prodotto da visionTar",
-        type=["csv"],
-        key="scarti_csv",
-    )
-    if scarti_file is not None and st.button("Importa scarti nella sessione"):
-        text_data = scarti_file.getvalue().decode("utf-8-sig")
-        reader = csv.DictReader(io.StringIO(text_data))
-        imported = 0
-        for row in reader:
-            classe = (row.get("classe") or "").strip()
-            if classe not in {"cotto", "poco", "blob", "rotto"}:
-                continue
-            inserted = add_defect_event(
-                st.session_state.active_session_id,
-                classe,
-                track_id=int(row["track_id"]) if row.get("track_id") else None,
-                confidence=float(row["confidence"]) if row.get("confidence") else None,
-                x_px=int(float(row["x_px"])) if row.get("x_px") else None,
-                y_px=int(float(row["y_px"])) if row.get("y_px") else None,
-                x_norm=float(row["x_norm"]) if row.get("x_norm") else None,
-                y_norm=float(row["y_norm"]) if row.get("y_norm") else None,
-                frame_finale=int(float(row["frame_finale"])) if row.get("frame_finale") else None,
-                timestamp_s=float(row["timestamp_s"]) if row.get("timestamp_s") else None,
-            )
-            if inserted:
-                imported += 1
-        st.success(f"Importati {imported} scarti.")
-        st.rerun()
-else:
-    st.caption("Avvia prima una sessione di lotto per importare i risultati del video.")
+                inserted = add_defect_event(
+                    st.session_state.active_session_id,
+                    classe,
+                    track_id=int(row["track_id"]) if row.get("track_id") else None,
+                    confidence=float(row["confidence"]) if row.get("confidence") else None,
+                    x_px=int(float(row["x_px"])) if row.get("x_px") else None,
+                    y_px=int(float(row["y_px"])) if row.get("y_px") else None,
+                    x_norm=float(row["x_norm"]) if row.get("x_norm") else None,
+                    y_norm=float(row["y_norm"]) if row.get("y_norm") else None,
+                    frame_finale=int(float(row["frame_finale"])) if row.get("frame_finale") else None,
+                    timestamp_s=float(row["timestamp_s"]) if row.get("timestamp_s") else None,
+                )
+                if inserted:
+                    imported += 1
 
-st.subheader("Report per lotto")
+            st.success(f"Importati {imported} scarti.")
+            st.rerun()
+    else:
+        st.caption("Avvia una sessione prima di importare gli scarti.")
 
-report_rows = build_lot_report_rows()
-if report_rows:
-    output = io.StringIO()
-    fieldnames = [
-        "production_date",
-        "product_description",
-        "lot_code",
-        "sessions",
-        "totale_scarti",
-        "cotto",
-        "poco",
-        "blob",
-        "rotto",
-    ]
-    writer = csv.DictWriter(output, fieldnames=fieldnames)
-    writer.writeheader()
-    writer.writerows(report_rows)
-    st.download_button(
-        "Scarica report_lotti.csv",
-        data=output.getvalue().encode("utf-8-sig"),
-        file_name="report_lotti.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-else:
-    st.caption("Il report sarà disponibile dopo la registrazione del primo lotto.")
+with report_col:
+    st.markdown("#### Report per lotto")
+
+    report_rows = build_lot_report_rows()
+    if report_rows:
+        output = io.StringIO()
+        fieldnames = [
+            "production_date",
+            "product_description",
+            "lot_code",
+            "sessions",
+            "totale_scarti",
+            "cotto",
+            "poco",
+            "blob",
+            "rotto",
+        ]
+        writer = csv.DictWriter(output, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(report_rows)
+
+        st.download_button(
+            "Scarica report_lotti.csv",
+            data=output.getvalue().encode("utf-8-sig"),
+            file_name="report_lotti.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+    else:
+        st.caption("Il report sarà disponibile dopo il primo lotto.")
