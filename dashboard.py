@@ -190,7 +190,7 @@ with left_col:
     if st.session_state.roi_top + st.session_state.roi_bottom >= 90:
         st.error("ROI verticale non valida: alto + basso deve essere inferiore al 90%.")
 
-    profile = PROFILES[selected_key]
+    profile = PROFILES[st.session_state.profile_key]
     direction_label = "destra → sinistra" if profile.direction == "rtl" else "sinistra → destra"
     st.caption(f"Direzione nastro del preset: {direction_label}")
 
