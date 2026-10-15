@@ -294,7 +294,7 @@ if st.session_state.active_session_id is not None:
             classe = (row.get("classe") or "").strip()
             if classe not in {"cotto", "poco", "blob", "rotto"}:
                 continue
-            add_defect_event(
+            inserted = add_defect_event(
                 st.session_state.active_session_id,
                 classe,
                 track_id=int(row["track_id"]) if row.get("track_id") else None,
@@ -306,7 +306,8 @@ if st.session_state.active_session_id is not None:
                 frame_finale=int(float(row["frame_finale"])) if row.get("frame_finale") else None,
                 timestamp_s=float(row["timestamp_s"]) if row.get("timestamp_s") else None,
             )
-            imported += 1
+            if inserted:
+                imported += 1
         st.success(f"Importati {imported} scarti.")
         st.rerun()
 else:
