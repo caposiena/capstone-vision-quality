@@ -23,3 +23,16 @@ Il flusso video verrà utilizzato soltanto per l’elaborazione e non verrà arc
 Il prototipo verrà valutato attraverso metriche di precision, recall, F1-score, qualità della localizzazione e tempi di inferenza, verificandone la compatibilità con le esigenze produttive.
 
 L’integrazione con hardware industriale dedicato, encoder, sistemi di scarto, dispositivi edge e collegamenti al gestionale aziendale resterà fuori dal perimetro del Capstone, pur essendo prevista come possibile evoluzione successiva del progetto.
+
+
+## Baseline validata V1 - 15 ottobre 2026
+
+Configurazione congelata: ROI sinistra 30%, destra 12%, alto 20%, basso 25%, deadline X 35%. Restano attivi tracking, CSV detection frame-by-frame, CSV finali one-row-per-track, supporto colore per cotto/poco e supporto geometrico per rotto.
+
+Risultati video 2, usato per calibrazione: ground truth manuale cotto 6, poco 5, blob 7, rotto 14; sistema cotto 6, poco 5, blob 6, rotto 15.
+
+Risultati video 3, prima validazione indipendente: ground truth manuale cotto 2, poco 3, blob 1, rotto 8; sistema cotto 2, poco 3, blob 1, rotto 9.
+
+Decisione: baseline V1 in freeze preliminare. Non modificare soglie colore, geometria, tracking o deadline sulla sola base dei video 2 e 3.
+
+Prossimo gate: video 1. Poiche presenta uno zoom/framing differente, ROI e deadline saranno verificati visivamente prima del test. Eventuali regolazioni geometriche specifiche del video 1 non devono modificare le soglie di classificazione senza nuova evidenza.
