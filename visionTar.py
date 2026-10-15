@@ -3,7 +3,7 @@ visionTar.py
 
 Prototipo Capstone per il riconoscimento di taralli da file video MP4.
 
-Versione 1.4
+Versione 1.5
 - GUI unica per selezione video e modello;
 - modalita TEST per salvare tutte le detection del modello generico;
 - modalita NORMALE per salvare solo le classi considerate difettose;
@@ -46,11 +46,19 @@ CONFIDENCE_THRESHOLD = 0.35
 
 # Area centrale di ispezione. Le detection con baricentro fuori da questa
 # regione vengono ignorate per ridurre falsi positivi ai bordi del frame.
-ROI_LEFT_RATIO = 0.08
-ROI_RIGHT_RATIO = 0.08
+ROI_LEFT_RATIO = 0.30
+ROI_RIGHT_RATIO = 0.12
 ROI_TOP_RATIO = 0.20
-ROI_BOTTOM_RATIO = 0.20
-DEADLINE_X_RATIO = 0.50
+ROI_BOTTOM_RATIO = 0.32
+DEADLINE_X_RATIO = 0.30
+
+DEFAULT_MODEL_PATH = Path(
+    "C:/Users/Lello/Documents/GitHub/capstone-vision-quality/"
+    "runs/detect/runs/train/taralli_v2_yolo11n/weights/best.pt"
+)
+DEFAULT_DATASET_PATH = Path(
+    "C:/Users/Lello/Documents/GitHub/capstone-vision-quality/taralli_yolo_v2"
+)
 TRACK_MAX_MISSED_FRAMES = 14
 TRACK_OBSERVATION_WINDOW = 12
 TRACK_MIN_FINAL_OBSERVATIONS = 4
@@ -67,13 +75,24 @@ TRACK_MIN_CROSSING_DELTA = 4
 TRACK_DEADLINE_RESCUE_RATIO = 0.08
 COLOR_INNER_CROP_RATIO = 0.15
 
+# Fusion colore prudenziale: il colore non sostituisce YOLO, ma puo
+# rafforzare una candidatura "cotto" o "poco" quando i descrittori del track
+# sono coerenti con i profili osservati nel dominio video controllato.
+COTTO_MAX_V = 190.0
+COTTO_MAX_LAB_L = 168.0
+COTTO_MIN_S = 125.0
+POCO_MIN_V = 208.0
+POCO_MIN_LAB_L = 192.0
+POCO_MAX_S = 110.0
+COLOR_SUPPORTED_THRESHOLD = 0.24
+
 
 def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float, float] | None:
     """Mostra una sola GUI per selezionare video, modello e modalita di prova."""
 
     root = tk.Tk()
     root.title("visionTar - Selezione input")
-    root.geometry("820x620")
+    root.geometry("820x670")
     root.resizable(False, False)
 
     video_var = tk.StringVar()
@@ -124,9 +143,12 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float, float
                 "(seleziona il video per vedere anche i pixel)"
             )
 
-    default_model = Path.cwd() / "yolo11n.pt"
-    if default_model.exists():
-        model_var.set(str(default_model))
+    if DEFAULT_MODEL_PATH.exists():
+        model_var.set(str(DEFAULT_MODEL_PATH))
+    else:
+        fallback_model = Path.cwd() / "yolo11n.pt"
+        if fallback_model.exists():
+            model_var.set(str(fallback_model))
 
     result: dict[str, object] = {}
 
@@ -279,6 +301,27 @@ def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float, float
         width=76,
         state="readonly",
     ).pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+    dataset_frame = tk.Frame(container)
+    dataset_frame.pack(fill="x", pady=(8, 2))
+
+    tk.Label(
+        dataset_frame,
+        text="Dataset V2:",
+        width=22,
+        anchor="w",
+        font=("Segoe UI", 9, "bold"),
+    ).pack(side="left")
+
+    tk.Entry(
+        dataset_frame,
+        width=76,
+        state="normal",
+    ).pack(side="left", padx=(10, 0), fill="x", expand=True)
+
+    dataset_entry = dataset_frame.winfo_children()[-1]
+    dataset_entry.insert(0, str(DEFAULT_DATASET_PATH))
+    dataset_entry.configure(state="readonly")
 
     test_frame = tk.Frame(container)
     test_frame.pack(fill="x", pady=(15, 5))
@@ -458,7 +501,7 @@ def extract_color_features(frame, x1: int, y1: int, x2: int, y2: int) -> dict[st
 
 
 def calculate_final_verdict(observations) -> dict[str, float | str]:
-    """Calcola il responso finale a due stadi sulle osservazioni del track."""
+    """Calcola il responso finale a due stadi con supporto colore prudenziale."""
     if len(observations) < TRACK_MIN_FINAL_OBSERVATIONS:
         return {
             "label": "incerto",
@@ -467,6 +510,10 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "defect_share": 0.0,
             "class_share": 0.0,
             "threshold": 0.0,
+            "color_support": "nessuno",
+            "track_v": 0.0,
+            "track_s": 0.0,
+            "track_lab_l": 0.0,
         }
 
     weighted_scores = defaultdict(float)
@@ -500,6 +547,40 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
         else 0.0
     )
 
+    track_s_values = sorted(
+        obs["color"]["s"] for obs in observations if "color" in obs
+    )
+    track_v_values = sorted(
+        obs["color"]["v"] for obs in observations if "color" in obs
+    )
+    track_l_values = sorted(
+        obs["color"]["lab_l"] for obs in observations if "color" in obs
+    )
+    mid = len(observations) // 2
+    track_s = float(track_s_values[mid]) if track_s_values else 0.0
+    track_v = float(track_v_values[mid]) if track_v_values else 0.0
+    track_lab_l = float(track_l_values[mid]) if track_l_values else 0.0
+
+    color_support = "nessuno"
+    color_supports_candidate = False
+
+    if (
+        candidate_label == "cotto"
+        and track_v <= COTTO_MAX_V
+        and track_lab_l <= COTTO_MAX_LAB_L
+        and track_s >= COTTO_MIN_S
+    ):
+        color_support = "cotto"
+        color_supports_candidate = True
+    elif (
+        candidate_label == "poco"
+        and track_v >= POCO_MIN_V
+        and track_lab_l >= POCO_MIN_LAB_L
+        and track_s <= POCO_MAX_S
+    ):
+        color_support = "poco"
+        color_supports_candidate = True
+
     threshold = DEFECT_BINARY_THRESHOLD
     if (
         candidate_label in SENSITIVE_DEFECT_CLASSES
@@ -507,6 +588,9 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
         and candidate_avg_confidence >= SENSITIVE_MIN_AVG_CONFIDENCE
     ):
         threshold = DEFECT_BINARY_THRESHOLD_SENSITIVE
+
+    if color_supports_candidate:
+        threshold = min(threshold, COLOR_SUPPORTED_THRESHOLD)
 
     if defect_share >= threshold and defect_score > 0:
         if class_share < DEFECT_CLASS_MIN_SHARE:
@@ -517,6 +601,10 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
                 "defect_share": defect_share,
                 "class_share": class_share,
                 "threshold": threshold,
+                "color_support": color_support,
+                "track_v": track_v,
+                "track_s": track_s,
+                "track_lab_l": track_lab_l,
             }
         return {
             "label": candidate_label,
@@ -525,6 +613,10 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "defect_share": defect_share,
             "class_share": class_share,
             "threshold": threshold,
+            "color_support": color_support,
+            "track_v": track_v,
+            "track_s": track_s,
+            "track_lab_l": track_lab_l,
         }
 
     good_conf = (
@@ -539,6 +631,10 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
         "defect_share": defect_share,
         "class_share": 0.0,
         "threshold": threshold,
+        "color_support": color_support,
+        "track_v": track_v,
+        "track_s": track_s,
+        "track_lab_l": track_lab_l,
     }
 
 
@@ -652,6 +748,10 @@ def process_video(
                     "lab_l_median",
                     "lab_a_median",
                     "lab_b_median",
+                    "supporto_colore",
+                    "track_v_median",
+                    "track_s_median",
+                    "track_lab_l_median",
                 ]
             )
 
@@ -825,6 +925,10 @@ def process_video(
                             "defect_share": None,
                             "final_class_share": None,
                             "defect_threshold_used": None,
+                            "color_support": None,
+                            "track_v": None,
+                            "track_s": None,
+                            "track_lab_l": None,
                         }
                     else:
                         unmatched_track_ids.discard(best_id)
@@ -878,6 +982,10 @@ def process_video(
                         track["defect_share"] = float(verdict["defect_share"])
                         track["final_class_share"] = float(verdict["class_share"])
                         track["defect_threshold_used"] = float(verdict["threshold"])
+                        track["color_support"] = str(verdict["color_support"])
+                        track["track_v"] = float(verdict["track_v"])
+                        track["track_s"] = float(verdict["track_s"])
+                        track["track_lab_l"] = float(verdict["track_lab_l"])
                         recent_final = (best_id, final_label, final_conf)
                         recent_final_until = frame_number + 20
 
@@ -960,6 +1068,22 @@ def process_video(
                                 f"{det['color']['lab_l']:.2f}",
                                 f"{det['color']['lab_a']:.2f}",
                                 f"{det['color']['lab_b']:.2f}",
+                                track["color_support"] or "",
+                                (
+                                    f"{track['track_v']:.2f}"
+                                    if track["track_v"] is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{track['track_s']:.2f}"
+                                    if track["track_s"] is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{track['track_lab_l']:.2f}"
+                                    if track["track_lab_l"] is not None
+                                    else ""
+                                ),
                             ]
                         )
                         saved_rows += 1
@@ -1001,6 +1125,10 @@ def process_video(
                             track["defect_share"] = float(verdict["defect_share"])
                             track["final_class_share"] = float(verdict["class_share"])
                             track["defect_threshold_used"] = float(verdict["threshold"])
+                            track["color_support"] = str(verdict["color_support"])
+                            track["track_v"] = float(verdict["track_v"])
+                            track["track_s"] = float(verdict["track_s"])
+                            track["track_lab_l"] = float(verdict["track_lab_l"])
                             recent_final = (
                                 track_id,
                                 track["final_label"],
