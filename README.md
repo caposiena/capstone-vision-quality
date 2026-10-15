@@ -102,6 +102,6 @@ L'integrazione con encoder, sistema fisico di scarto, dispositivi edge e gestion
 
 Con la baseline V1 congelata è iniziata la parte applicativa. La dashboard gestisce già due profili di acquisizione validati sui video di prova, permette di calibrare ROI e deadline senza modificare il classificatore ed è predisposta per file video, videocamera USB e stream IP.
 
-La dashboard è stata focalizzata sull'uso con video registrati, coerente con il perimetro della consegna. L'operatore inserisce data di produzione, descrizione prodotto e lotto, seleziona il video di prova e può calibrare ROI e deadline. I risultati `*_scarti.csv` prodotti da `visionTar.py` possono essere importati nella sessione: il sistema aggiorna i conteggi per `cotto`, `poco`, `blob` e `rotto` e costruisce un report cumulativo per lotto e descrizione prodotto.
+La dashboard è focalizzata sull'uso con video registrati, coerente con il perimetro della consegna. L'operatore inserisce data di produzione, descrizione prodotto e lotto, seleziona il video di prova e calibra ROI e deadline sul primo fotogramma. Dalla stessa schermata può poi avviare l'analisi YOLO: `visionTar.py` viene eseguito in modalità headless, produce il video annotato e registra automaticamente nella sessione i difetti finalizzati `cotto`, `poco`, `blob` e `rotto`.
 
 Il report finale scaricabile è `report_lotti.csv`, con data, prodotto, lotto, numero di sessioni, totale scarti e dettaglio per tipologia. Il collegamento a videocamera live, encoder e attuatore resta documentato come sviluppo successivo.
