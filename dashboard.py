@@ -330,9 +330,9 @@ with meta2:
 with meta3:
     lot_code = st.text_input("Lotto", placeholder="L251016A")
 
-left_col, center_col, right_col = st.columns([0.16, 0.54, 0.30], gap="small")
+setup_left, setup_right = st.columns([0.18, 0.82], gap="small")
 
-with left_col:
+with setup_left:
     st.markdown("#### Input")
 
     source_mode = st.selectbox(
@@ -353,28 +353,31 @@ with left_col:
             label_visibility="collapsed",
         )
     else:
-        camera_index = int(
-            st.number_input(
-                "Indice camera",
-                min_value=0,
-                max_value=10,
-                value=0,
-                step=1,
+        cam1, cam2 = st.columns([0.42, 0.58])
+        with cam1:
+            camera_index = int(
+                st.number_input(
+                    "Camera",
+                    min_value=0,
+                    max_value=10,
+                    value=0,
+                    step=1,
+                )
             )
-        )
-        if st.button("Leggi camera", use_container_width=True):
-            try:
-                camera = open_usb_camera(camera_index)
+        with cam2:
+            if st.button("Leggi camera", use_container_width=True):
                 try:
-                    ok, camera_frame = camera.read()
-                    if not ok:
-                        raise RuntimeError("Nessun fotogramma ricevuto.")
-                    st.session_state.camera_preview_frame = camera_frame
-                    st.session_state.display_mode = "calibration"
-                finally:
-                    camera.release()
-            except Exception as exc:
-                st.error(f"Camera non disponibile: {exc}")
+                    camera = open_usb_camera(camera_index)
+                    try:
+                        ok, camera_frame = camera.read()
+                        if not ok:
+                            raise RuntimeError("Nessun fotogramma ricevuto.")
+                        st.session_state.camera_preview_frame = camera_frame
+                        st.session_state.display_mode = "calibration"
+                    finally:
+                        camera.release()
+                except Exception as exc:
+                    st.error(f"Camera non disponibile: {exc}")
 
     if uploaded is not None:
         current_signature = f"{uploaded.name}:{uploaded.size}"
@@ -399,8 +402,15 @@ with left_col:
         index=list(PROFILES.keys()).index(st.session_state.profile_key),
     )
 
-    p1, p2 = st.columns(2)
-    with p1:
+with setup_right:
+    st.markdown("#### Area nastro")
+
+    set1, set2, set3, set4, set5, set6, set7, set8 = st.columns(
+        [0.09, 0.11, 0.13, 0.13, 0.13, 0.13, 0.15, 0.13],
+        gap="small",
+    )
+
+    with set1:
         st.number_input(
             "Botole",
             min_value=2,
@@ -408,7 +418,7 @@ with left_col:
             step=1,
             key="trapdoor_count",
         )
-    with p2:
+    with set2:
         st.number_input(
             "Nastro cm",
             min_value=10.0,
@@ -416,41 +426,45 @@ with left_col:
             step=1.0,
             key="belt_width_cm",
         )
-
-    gate_width_cm = st.session_state.belt_width_cm / max(1, st.session_state.trapdoor_count)
-    st.caption(
-        f"{st.session_state.trapdoor_count} botole · "
-        f"{gate_width_cm:.1f} cm nominali per botola"
-    )
-
-    cal_title, cal_preset = st.columns([0.58, 0.42])
-    with cal_title:
-        st.markdown("#### Area nastro")
-    with cal_preset:
+    with set3:
+        st.slider("Margine SX", 0, 45, key="roi_left")
+    with set4:
+        st.slider("Margine DX", 0, 45, key="roi_right")
+    with set5:
+        st.slider("Margine ALTO", 0, 45, key="roi_top")
+    with set6:
+        st.slider("Margine BASSO", 0, 45, key="roi_bottom")
+    with set7:
+        st.slider("DEADLINE", 0, 100, key="deadline_x")
+    with set8:
+        st.write("")
         if st.button("Preset", use_container_width=True):
             load_profile(selected_key)
             st.session_state.display_mode = "calibration"
             st.rerun()
 
-    cal1, cal2 = st.columns(2)
-    with cal1:
-        st.slider("Margine SX", 0, 45, key="roi_left")
-        st.slider("Margine ALTO", 0, 45, key="roi_top")
-    with cal2:
-        st.slider("Margine DX", 0, 45, key="roi_right")
-        st.slider("Margine BASSO", 0, 45, key="roi_bottom")
-    st.slider("DEADLINE", 0, 100, key="deadline_x")
-
-    invalid_roi = (
-        st.session_state.roi_left + st.session_state.roi_right >= 90
-        or st.session_state.roi_top + st.session_state.roi_bottom >= 90
+    gate_width_cm = (
+        st.session_state.belt_width_cm
+        / max(1, st.session_state.trapdoor_count)
     )
-    if invalid_roi:
-        st.error("ROI non valida.")
+    st.caption(
+        f"{st.session_state.trapdoor_count} botole · "
+        f"{st.session_state.belt_width_cm:.0f} cm nastro · "
+        f"{gate_width_cm:.1f} cm nominali per botola"
+    )
 
-    profile = PROFILES[st.session_state.profile_key]
+invalid_roi = (
+    st.session_state.roi_left + st.session_state.roi_right >= 90
+    or st.session_state.roi_top + st.session_state.roi_bottom >= 90
+)
+if invalid_roi:
+    st.error("Area nastro non valida: riduci i margini.")
 
-with center_col:
+profile = PROFILES[st.session_state.profile_key]
+
+main_col, right_col = st.columns([0.70, 0.30], gap="small")
+
+with main_col:
     st.markdown("#### Visione linea")
 
     frame_data = None
@@ -467,8 +481,8 @@ with center_col:
         h, w = camera_frame.shape[:2]
         frame_data = (camera_frame, w, h, 0.0)
 
-    display_video_width = 280
-    display_gate_width = 56
+    display_video_width = 300
+    display_gate_width = 58
     display_video_height = 180
     if frame_data is not None:
         raw_roi = crop_to_roi(
@@ -484,8 +498,8 @@ with center_col:
             int(round(display_video_width * raw_h / max(1, raw_w))),
         )
 
-    trapdoor_col, video_col = st.columns([0.17, 0.83], gap="small")
-    with trapdoor_col:
+    view_left, view_mid, view_space = st.columns([0.10, 0.48, 0.42], gap="small")
+    with view_left:
         trapdoor_frame = st.empty()
         trapdoor_frame.image(
             build_trapdoor_panel(
@@ -496,14 +510,14 @@ with center_col:
             channels="RGB",
             width=display_gate_width,
         )
-    with video_col:
+    with view_mid:
         video_frame = st.empty()
         video_caption = st.empty()
         progress_area = st.empty()
 
     if frame_data is None:
         if source_mode == "Videocamera USB":
-            video_frame.info("Collega/acquisisci la videocamera per la calibrazione.")
+            video_frame.info("Collega/acquisisci la videocamera.")
         else:
             video_frame.info("Carica un video per iniziare.")
     elif st.session_state.display_mode == "calibration":
@@ -532,8 +546,8 @@ with center_col:
         )
         crop_h, crop_w = cropped_overlay.shape[:2]
         video_caption.caption(
-            f"CALIBRAZIONE ROI · {crop_w}×{crop_h} · "
-            f"{st.session_state.trapdoor_count} botole · scarto a sinistra"
+            f"AREA NASTRO · {crop_w}×{crop_h} · "
+            f"{st.session_state.trapdoor_count} botole"
         )
 
 with right_col:
