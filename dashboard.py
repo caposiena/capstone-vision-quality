@@ -120,6 +120,19 @@ def draw_acquisition_overlay(
     return cv2.cvtColor(output, cv2.COLOR_BGR2RGB)
 
 
+def crop_to_roi(frame, left: int, right: int, top: int, bottom: int):
+    height, width = frame.shape[:2]
+    x1 = int(width * left / 100)
+    x2 = int(width * (100 - right) / 100)
+    y1 = int(height * top / 100)
+    y2 = int(height * (100 - bottom) / 100)
+    x1 = max(0, min(width - 1, x1))
+    x2 = max(x1 + 1, min(width, x2))
+    y1 = max(0, min(height - 1, y1))
+    y2 = max(y1 + 1, min(height, y2))
+    return frame[y1:y2, x1:x2]
+
+
 def read_uploaded_video_frame(uploaded_file):
     temp_path = None
     try:
@@ -256,11 +269,11 @@ left_col, center_col, right_col = st.columns([0.27, 0.48, 0.25], gap="medium")
 with left_col:
     st.markdown("#### Input")
 
-    source_mode = st.radio(
-        "Sorgente",
+    source_mode = st.selectbox(
+        "Sorgente input",
         ["Video registrato", "Videocamera USB"],
-        horizontal=True,
-        label_visibility="collapsed",
+        index=0,
+        help="Seleziona un file video oppure una videocamera USB collegata al dispositivo.",
     )
 
     uploaded = None
@@ -403,9 +416,17 @@ with center_col:
             profile.direction,
             st.session_state.trapdoor_count,
         )
-        video_frame.image(overlay, channels="RGB", use_container_width=True)
+        cropped_overlay = crop_to_roi(
+            overlay,
+            st.session_state.roi_left,
+            st.session_state.roi_right,
+            st.session_state.roi_top,
+            st.session_state.roi_bottom,
+        )
+        video_frame.image(cropped_overlay, channels="RGB", width=430)
+        crop_h, crop_w = cropped_overlay.shape[:2]
         video_caption.caption(
-            f"CALIBRAZIONE · {width}×{height} · "
+            f"CALIBRAZIONE ROI VISIBILE · {crop_w}×{crop_h} · "
             f"{st.session_state.trapdoor_count} botole"
         )
 
@@ -484,17 +505,24 @@ if start_clicked:
                     )
 
             def update_live_frame(current_frame: int, total_frames: int, frame) -> None:
-                height, width = frame.shape[:2]
-                target_width = 560
+                cropped = crop_to_roi(
+                    frame,
+                    st.session_state.roi_left,
+                    st.session_state.roi_right,
+                    st.session_state.roi_top,
+                    st.session_state.roi_bottom,
+                )
+                height, width = cropped.shape[:2]
+                target_width = 430
                 if width > target_width:
                     scale = target_width / width
                     preview = cv2.resize(
-                        frame,
+                        cropped,
                         (target_width, max(1, int(height * scale))),
                         interpolation=cv2.INTER_AREA,
                     )
                 else:
-                    preview = frame
+                    preview = cropped
 
                 ok, encoded = cv2.imencode(
                     ".jpg",
