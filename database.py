@@ -343,3 +343,12 @@ def build_session_report_rows(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
             )
         result.append(item)
     return result
+
+
+def reset_database(db_path: Path = DB_PATH) -> None:
+    """Azzera completamente il database di test e ricrea lo schema."""
+    for suffix in ("", "-shm", "-wal"):
+        candidate = Path(str(db_path) + suffix)
+        if candidate.exists():
+            candidate.unlink()
+    init_db(db_path)
