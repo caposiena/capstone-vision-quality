@@ -814,7 +814,7 @@ if start_clicked:
             run_input = Path(input_path)
 
             try:
-                process_video(
+                detections_path = process_video(
                     video_path=run_input,
                     model_path=DEFAULT_MODEL_PATH,
                     test_mode=True,
@@ -836,6 +836,77 @@ if start_clicked:
                 scarti_path = run_input.with_name(
                     f"{run_input.stem}_scarti_test.csv"
                 )
+                finali_path = run_input.with_name(
+                    f"{run_input.stem}_finali_test.csv"
+                )
+
+                # Diagnostica non invasiva: individua track con evidenza YOLO
+                # "poco" che non arrivano al responso finale POCO. Non cambia
+                # alcuna soglia del classificatore.
+                poco_track_stats: dict[int, dict[str, float]] = {}
+                if Path(detections_path).exists():
+                    with Path(detections_path).open(
+                        "r",
+                        encoding="utf-8-sig",
+                        newline="",
+                    ) as detection_file:
+                        for row in csv.DictReader(detection_file):
+                            if (row.get("classe") or "").strip() != "poco":
+                                continue
+                            raw_track = (row.get("track_id") or "").strip()
+                            if not raw_track:
+                                continue
+                            track_id = int(float(raw_track))
+                            stats = poco_track_stats.setdefault(
+                                track_id,
+                                {"count": 0.0, "confidence_sum": 0.0},
+                            )
+                            stats["count"] += 1.0
+                            try:
+                                stats["confidence_sum"] += float(row.get("confidence") or 0.0)
+                            except ValueError:
+                                pass
+
+                final_by_track: dict[int, dict[str, str]] = {}
+                if finali_path.exists():
+                    with finali_path.open(
+                        "r",
+                        encoding="utf-8-sig",
+                        newline="",
+                    ) as final_file:
+                        for row in csv.DictReader(final_file):
+                            raw_track = (row.get("track_id") or "").strip()
+                            if raw_track:
+                                final_by_track[int(float(raw_track))] = row
+
+                poco_candidates_lost = []
+                for track_id, stats in poco_track_stats.items():
+                    if stats["count"] < 2:
+                        continue
+                    final_row = final_by_track.get(track_id, {})
+                    final_label = (final_row.get("responso_finale") or "").strip()
+                    if final_label == "poco":
+                        continue
+                    poco_candidates_lost.append(
+                        {
+                            "track_id": track_id,
+                            "osservazioni": int(stats["count"]),
+                            "conf_media": (
+                                stats["confidence_sum"] / stats["count"]
+                                if stats["count"] > 0
+                                else 0.0
+                            ),
+                            "finale": final_label or "nessuno",
+                            "supporto_colore": (
+                                final_row.get("supporto_colore") or ""
+                            ).strip(),
+                            "lab_l": (
+                                final_row.get("track_lab_l_median") or ""
+                            ).strip(),
+                        }
+                    )
+
+                st.session_state.poco_diagnostic = poco_candidates_lost
 
                 session_id = create_session(
                     production_date=production_date,
@@ -925,8 +996,17 @@ if start_clicked:
                 )
 
                 st.session_state.last_closed_session_id = session_id
+                poco_diag_count = len(
+                    st.session_state.get("poco_diagnostic", [])
+                )
+                diagnostic_suffix = (
+                    f" · {poco_diag_count} track con evidenza POCO non confermata"
+                    if poco_diag_count
+                    else ""
+                )
                 st.session_state.analysis_summary = (
                     f"Sessione #{session_id} · {imported} scarti"
+                    f"{diagnostic_suffix}"
                 )
                 st.session_state.display_mode = "processed"
                 progress.progress(1.0, text="Analisi completata")
