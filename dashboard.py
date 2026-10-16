@@ -264,7 +264,7 @@ with meta2:
 with meta3:
     lot_code = st.text_input("Lotto", placeholder="L251016A")
 
-left_col, center_col, right_col = st.columns([0.27, 0.48, 0.25], gap="medium")
+left_col, center_col, right_col = st.columns([0.30, 0.40, 0.30], gap="medium")
 
 with left_col:
     st.markdown("#### Input")
@@ -423,11 +423,11 @@ with center_col:
             st.session_state.roi_top,
             st.session_state.roi_bottom,
         )
-        video_frame.image(cropped_overlay, channels="RGB", width=430)
+        video_frame.image(cropped_overlay, channels="RGB", width=330)
         crop_h, crop_w = cropped_overlay.shape[:2]
         video_caption.caption(
-            f"CALIBRAZIONE ROI VISIBILE · {crop_w}×{crop_h} · "
-            f"{st.session_state.trapdoor_count} botole"
+            f"CALIBRAZIONE ROI · {crop_w}×{crop_h} · "
+            f"{st.session_state.trapdoor_count} botole · scarto a sinistra"
         )
 
 with right_col:
@@ -513,7 +513,7 @@ if start_clicked:
                     st.session_state.roi_bottom,
                 )
                 height, width = cropped.shape[:2]
-                target_width = 430
+                target_width = 330
                 if width > target_width:
                     scale = target_width / width
                     preview = cv2.resize(
