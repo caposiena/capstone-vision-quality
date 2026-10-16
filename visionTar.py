@@ -514,8 +514,8 @@ def draw_trapdoor_simulator(
     roi_w = max(1, rx2 - rx1)
     roi_h = max(1, ry2 - ry1)
     panel_w = max(54, int(roi_w * 0.12))
-    x2 = max(rx1 + 1, rx2 - 4)
-    x1 = max(rx1, x2 - panel_w)
+    x1 = min(rx2 - 1, rx1 + 4)
+    x2 = min(rx2, x1 + panel_w)
 
     cv2.rectangle(frame, (x1, ry1), (x2, ry2), (18, 22, 28), -1)
 
