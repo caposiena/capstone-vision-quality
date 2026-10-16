@@ -1,87 +1,63 @@
-# Sistema di visione artificiale per il controllo qualità di prodotti da forno
+**Sistema di visione artificiale per il controllo qualità di prodotti da forno**
 
 Capstone EPICODE dedicato al controllo visivo di taralli su nastro trasportatore.
 
-Il prototipo riconosce i singoli pezzi, assegna una classe e registra gli scarti. Le classi utilizzate sono `buono`, `cotto`, `poco`, `blob` e `rotto`.
+Il prototipo riconosce i singoli pezzi, assegna una classe e registra gli scarti. Le classi usate sono buono, cotto, poco, blob e rotto.
 
-La pipeline utilizza YOLO per la detection e OpenCV per acquisizione, colore, geometria e visualizzazione. Il risultato viene consolidato con un tracking leggero; il responso viene fissato al passaggio della deadline impostata nella ROI.
+La parte di riconoscimento utilizza YOLO. OpenCV viene usato per l'acquisizione dei frame, per i controlli su colore e geometria e per la visualizzazione. Le detection dello stesso prodotto vengono raccolte in un track e il responso viene fissato quando il pezzo raggiunge la deadline impostata nella ROI.
 
-## Avvio
+**Avvio**
 
-Ambiente di sviluppo: Python 3.11.
+L'ambiente usato per lo sviluppo è Python 3.11.
 
-Installazione dipendenze:
+Installazione dipendenze: python -m pip install -r requirements.txt
 
-```powershell
-python -m pip install -r requirements.txt
-```
+Avvio dashboard: streamlit run .\dashboard.py
 
-Avvio dashboard:
+Il modello addestrato usato dal progetto è best.pt, ottenuto dal training sul dataset V2.
 
-```powershell
-streamlit run .\dashboard.py
-```
+**File principali**
 
-Il modello addestrato usato dal progetto è `best.pt` prodotto dal training sul dataset V2.
+visionTar.py contiene l'analisi video, il tracking, il responso finale e la generazione dei CSV. dashboard.py contiene l'interfaccia Streamlit. acquisition_config.py raccoglie i profili ROI e deadline. video_source.py gestisce le sorgenti video. database.py gestisce sessioni, scarti e report SQLite.
 
-## File principali
+trainTar.py viene usato per il training, testTar.py per la valutazione del modello e buildDatasetV2.py per la preparazione del dataset.
 
-- `visionTar.py`: analisi video, tracking, classificazione finale e generazione dei CSV
-- `dashboard.py`: interfaccia Streamlit
-- `acquisition_config.py`: profili ROI e deadline
-- `video_source.py`: gestione delle sorgenti video
-- `database.py`: sessioni, scarti e report SQLite
-- `trainTar.py`: training YOLO
-- `testTar.py`: valutazione del modello
-- `buildDatasetV2.py`: preparazione dataset
+La documentazione del dataset e della validazione si trova in docs/DATASET.md e docs/CALIBRAZIONE.md.
 
-Documentazione:
-- `docs/DATASET.md`
-- `docs/CALIBRAZIONE.md`
+**Funzionamento**
 
-## Funzionamento
+Il flusso è questo:
 
-Flusso principale:
+video → ROI → YOLO → tracking → colore/geometria → deadline → responso finale → coordinate scarto → database/report
 
-```text
-video -> ROI -> YOLO -> tracking -> colore/geometria -> deadline
-      -> responso finale -> coordinate scarto -> database/report
-```
+Per ogni sessione vengono prodotti un CSV con le detection frame per frame, un CSV con un solo record per ogni track finalizzato e un CSV dedicato agli scarti. Quest'ultimo contiene coordinate, bounding box, timestamp e botole associate.
 
-Per ogni sessione vengono generati:
-- CSV delle detection frame per frame;
-- CSV con un record per ogni track finalizzato;
-- CSV degli scarti con coordinate, bounding box, timestamp e botole associate.
+La dashboard registra anche data di produzione, prodotto e lotto e aggiorna il report riepilogativo report_lotti.csv.
 
-La dashboard registra inoltre data, prodotto e lotto e produce il report riepilogativo `report_lotti.csv`.
+**Validazione**
 
-## Validazione
+Il video 2 è stato usato per la calibrazione, il video 3 per la verifica indipendente e il video 1 come prova aggiuntiva con zoom e illuminazione differenti.
 
-La calibrazione è stata eseguita sul video 2. Il video 3 è stato usato come verifica indipendente; il video 1 come prova aggiuntiva con zoom e illuminazione differenti.
+Video 2, conteggio manuale: cotto 6, poco 5, blob 7, rotto 14.  
+Video 2, sistema: cotto 6, poco 5, blob 6, rotto 15.
 
-Risultati di riferimento:
+Video 3, conteggio manuale: cotto 2, poco 3, blob 1, rotto 8.  
+Video 3, sistema: cotto 2, poco 3, blob 1, rotto 9.
 
-| Video | Cotto | Poco | Blob | Rotto |
-|---|---:|---:|---:|---:|
-| 2 - manuale | 6 | 5 | 7 | 14 |
-| 2 - sistema | 6 | 5 | 6 | 15 |
-| 3 - manuale | 2 | 3 | 1 | 8 |
-| 3 - sistema | 2 | 3 | 1 | 9 |
+Sul video 1 il riferimento manuale disponibile per rotto è 14; il sistema ne rileva 17.
 
-Sul video 1 il conteggio manuale disponibile per `rotto` è 14; il sistema ne rileva 17.
+I dettagli sono riportati in docs/CALIBRAZIONE.md.
 
-I dettagli della validazione sono in `docs/CALIBRAZIONE.md`.
+**Dashboard e simulazione dello scarto**
 
-## Dashboard e simulazione scarto
+Dalla dashboard si impostano ROI, deadline, larghezza del nastro e numero di botole. La configurazione usata nel prototipo è un nastro da 40 cm con 20 botole.
 
-La dashboard consente di impostare ROI, deadline, larghezza del nastro e numero di botole. La configurazione usata nel prototipo è 40 cm con 20 botole.
+Quando un pezzo viene classificato come difettoso, la bounding box viene riferita alla larghezza utile del nastro e trasformata nelle botole interessate. Nel file tecnico rimangono anche le coordinate in pixel e normalizzate, il frame e il timestamp.
 
-Quando un pezzo viene finalizzato come difettoso, la bounding box viene proiettata sulla larghezza utile del nastro e convertita nelle botole interessate. Il file tecnico di scarto conserva anche coordinate in pixel e normalizzate, frame e timestamp.
+Il pannello laterale mostra le botole che il software assocerebbe allo scarto. La sincronizzazione fisica tra camera e attuatore non fa parte di questa versione e verrà affidata all'encoder della linea.
 
-Il pannello botole rappresenta la selezione calcolata dal software. La sincronizzazione fisica tra camera e attuatore non è compresa nel Capstone e richiederà l'encoder della linea.
+**Limiti attuali**
 
-## Limiti attuali
+La validazione è stata fatta su video registrati. La videocamera USB è già gestita per la fase di calibrazione, ma l'elaborazione continua con hardware reale non è stata ancora validata.
 
-La validazione è stata eseguita su video registrati. La lettura da videocamera USB è predisposta per la calibrazione, ma l'elaborazione continua con hardware reale non è stata ancora validata.
-
-Encoder, attuatore e integrazione con il gestionale non fanno parte della versione consegnata.
+Encoder, attuatore e collegamento al gestionale restano fuori dal perimetro della versione consegnata.
