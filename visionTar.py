@@ -765,6 +765,35 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
         else 0.0
     )
 
+    # Evidenza specifica "poco": viene calcolata solo sui frame in cui
+    # YOLO ha effettivamente visto il track come poco. In questo modo
+    # alcune osservazioni successive "buono" non cancellano una evidenza
+    # cromatica forte gia raccolta sullo stesso tarallo.
+    poco_observations_list = [
+        obs for obs in observations
+        if obs.get("label") == "poco" and "color" in obs
+    ]
+    poco_observations = len(poco_observations_list)
+    poco_confidences = [float(obs["confidence"]) for obs in poco_observations_list]
+    poco_avg_confidence = (
+        sum(poco_confidences) / poco_observations
+        if poco_observations > 0
+        else 0.0
+    )
+    poco_v_values = sorted(
+        float(obs["color"]["v"]) for obs in poco_observations_list
+    )
+    poco_s_values = sorted(
+        float(obs["color"]["s"]) for obs in poco_observations_list
+    )
+    poco_l_values = sorted(
+        float(obs["color"]["lab_l"]) for obs in poco_observations_list
+    )
+    poco_mid = poco_observations // 2 if poco_observations else 0
+    poco_v = float(poco_v_values[poco_mid]) if poco_v_values else 0.0
+    poco_s = float(poco_s_values[poco_mid]) if poco_s_values else 0.0
+    poco_lab_l = float(poco_l_values[poco_mid]) if poco_l_values else 0.0
+
     track_s_values = sorted(
         obs["color"]["s"] for obs in observations if "color" in obs
     )
@@ -893,6 +922,41 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "track_aspect": track_aspect,
             "track_extent": track_extent,
             "strong_shape_override": True,
+            "rotto_observations": rotto_observations,
+            "rotto_avg_confidence": rotto_avg_confidence,
+            "rotto_score_ratio": rotto_score_ratio,
+        }
+
+    # Isteresi prudenziale per "poco": se lo stesso track e stato visto
+    # almeno due volte come poco e quelle osservazioni hanno il profilo
+    # cromatico forte gia validato (in particolare Lab L >= 208), il
+    # responso resta poco anche se gli ultimi frame oscillano verso buono.
+    poco_strong_confirmation = (
+        candidate_label == "poco"
+        and poco_observations >= POCO_COLOR_MIN_OBSERVATIONS
+        and poco_v >= POCO_MIN_V
+        and poco_lab_l >= POCO_FINAL_MIN_LAB_L
+        and poco_s <= POCO_MAX_S
+    )
+    if poco_strong_confirmation:
+        return {
+            "label": "poco",
+            "confidence": poco_avg_confidence,
+            "state": "FINALE",
+            "defect_share": defect_share,
+            "class_share": class_share,
+            "threshold": POCO_COLOR_SUPPORTED_THRESHOLD,
+            "color_support": "poco_forte",
+            "track_v": track_v,
+            "track_s": track_s,
+            "track_lab_l": poco_lab_l,
+            "shape_support": shape_support,
+            "shape_anomalies": shape_anomalies,
+            "track_circularity": track_circularity,
+            "track_solidity": track_solidity,
+            "track_aspect": track_aspect,
+            "track_extent": track_extent,
+            "strong_shape_override": strong_shape_override,
             "rotto_observations": rotto_observations,
             "rotto_avg_confidence": rotto_avg_confidence,
             "rotto_score_ratio": rotto_score_ratio,
@@ -1149,8 +1213,7 @@ def process_video(
     next_track_id = 1
     recent_final = None
     recent_final_until = 0
-    recent_gate_event = None
-    recent_gate_until = 0
+    active_gate_events = []
     finalized_track_ids = set()
 
     try:
@@ -1233,7 +1296,7 @@ def process_video(
 
             def persist_final_track(track_id, track) -> None:
                 """Scrive una sola riga per ogni tarallo finalizzato."""
-                nonlocal recent_gate_event, recent_gate_until
+                nonlocal active_gate_events
                 if track_id in finalized_track_ids or track["final_label"] is None:
                     return
 
@@ -1288,12 +1351,15 @@ def process_video(
                     )
                     gate_list = ";".join(str(idx) for idx in gate_numbers)
 
-                    recent_gate_event = {
-                        "track_id": track_id,
-                        "label": track["final_label"],
-                        "gates": gate_numbers,
-                    }
-                    recent_gate_until = frame_number + max(8, int((video_fps or 25.0) * 0.45))
+                    active_gate_events.append(
+                        {
+                            "track_id": int(track_id),
+                            "label": str(track["final_label"]),
+                            "gates": list(gate_numbers),
+                            "until": frame_number
+                            + max(8, int((video_fps or 25.0) * 0.45)),
+                        }
+                    )
 
                     if defect_callback is not None:
                         defect_callback(str(track["final_label"]), int(track_id))
@@ -1937,13 +2003,35 @@ def process_video(
                     cv2.LINE_AA,
                 )
 
-                active_gates = []
-                active_label = None
-                active_track_id = None
-                if recent_gate_event is not None and frame_number <= recent_gate_until:
-                    active_gates = list(recent_gate_event["gates"])
-                    active_label = str(recent_gate_event["label"])
-                    active_track_id = int(recent_gate_event["track_id"])
+                # Mantiene contemporaneamente tutte le aperture ancora attive.
+                # Prima un nuovo scarto sovrascriveva quello precedente e alcune
+                # botole sembravano non aprirsi nel simulatore.
+                active_gate_events[:] = [
+                    event
+                    for event in active_gate_events
+                    if frame_number <= int(event["until"])
+                ]
+                active_gates = sorted(
+                    {
+                        gate
+                        for event in active_gate_events
+                        for gate in event["gates"]
+                    }
+                )
+                active_label = (
+                    "+".join(
+                        dict.fromkeys(
+                            str(event["label"]) for event in active_gate_events
+                        )
+                    )
+                    if active_gate_events
+                    else None
+                )
+                active_track_id = (
+                    int(active_gate_events[-1]["track_id"])
+                    if active_gate_events
+                    else None
+                )
 
                 if gate_callback is not None:
                     gate_callback(active_gates, active_label, active_track_id)
