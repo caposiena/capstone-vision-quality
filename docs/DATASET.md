@@ -1,61 +1,44 @@
 # Dataset
 
-Il dataset usato per la baseline V1 contiene immagini reali di taralli annotate in formato YOLO.
+Il dataset V2 contiene immagini reali di taralli annotate in formato YOLO. Ogni bounding box ha una sola classe tra `buono`, `cotto`, `poco`, `blob` e `rotto`.
 
-## Classi definitive
+## Composizione
 
-Le cinque classi usate dal modello sono:
+| Classe | Oggetti |
+|---|---:|
+| buono | 330 |
+| cotto | 208 |
+| poco | 169 |
+| blob | 133 |
+| rotto | 287 |
+| **Totale** | **1127** |
 
-- `buono`
-- `cotto`
-- `poco`
-- `blob`
-- `rotto`
+Le immagini complessive sono 96.
 
-Ogni bounding box riceve una sola etichetta.
+| Split | Immagini | Oggetti |
+|---|---:|---:|
+| train | 58 | 736 |
+| validation | 15 | 186 |
+| test | 23 | 205 |
 
-## Composizione V2
+Il test set proviene da un'acquisizione precedente rispetto a train e validation. Per questo motivo è più difficile e rappresenta meglio il cambio di condizioni di ripresa.
 
-Il dataset V2 contiene 96 immagini e 1127 oggetti annotati:
+Quando più frame provengono dallo stesso video, sequenze quasi identiche non vengono distribuite tra train e validation, per evitare che immagini molto simili compaiano in entrambi gli insiemi.
 
-- buono: 330
-- cotto: 208
-- poco: 169
-- blob: 133
-- rotto: 287
+## Metriche
 
-Split utilizzato:
-
-- train: 58 immagini, 736 oggetti
-- validation: 15 immagini, 186 oggetti
-- test: 23 immagini, 205 oggetti
-
-Il test contiene immagini provenienti da una precedente acquisizione diversa da quella usata per train e validation. Questo lo rende più difficile ma utile per misurare il comportamento fuori dalle condizioni più controllate.
-
-## Criteri di acquisizione
-
-L'acquisizione ideale prevede camera fissa, distanza costante, sfondo coerente, illuminazione stabile, prodotto su singolo strato e orientamento casuale.
-
-Quando i frame provengono dallo stesso video, sequenze quasi identiche non devono essere distribuite tra train e validation, per evitare data leakage.
-
-## Risultati del modello
-
-Sulla validation interna il modello ha ottenuto complessivamente:
-
+Validation interna:
 - precision: 0.942
 - recall: 0.972
 - mAP50: 0.980
 - mAP50-95: 0.613
 
-Sul test indipendente:
-
+Test indipendente:
 - precision: 0.466
 - recall: 0.823
 - mAP50: 0.546
 - mAP50-95: 0.289
 
-La differenza tra validation e test è stata uno dei motivi per cui il progetto non si è fermato alla sola metrica YOLO. La pipeline video usa anche tracking, conferme colore e supporto geometrico prima di produrre il responso finale.
+La differenza tra validation e test ha portato a mantenere YOLO come detector, aggiungendo nel flusso video tracking e controlli su colore e forma prima del responso finale.
 
-## Filosofia di errore
-
-Per l'applicazione prevista è preferibile tollerare un numero limitato di falsi positivi, verificabili dall'operatore tra gli scarti, piuttosto che lasciare passare prodotti non conformi.
+Nel progetto viene privilegiato il richiamo dei difetti: un numero limitato di falsi positivi è accettabile perché i pezzi scartati possono essere verificati dall'operatore.
