@@ -31,6 +31,15 @@ def init_db(db_path: Path = DB_PATH) -> None:
             )
             """
         )
+        session_columns = {
+            str(row["name"])
+            for row in conn.execute("PRAGMA table_info(production_sessions)").fetchall()
+        }
+        if "total_analyzed" not in session_columns:
+            conn.execute(
+                "ALTER TABLE production_sessions ADD COLUMN total_analyzed INTEGER NOT NULL DEFAULT 0"
+            )
+
         conn.execute(
             """
             CREATE TABLE IF NOT EXISTS defect_events (
@@ -96,16 +105,34 @@ def create_session(
         return int(cursor.lastrowid)
 
 
-def close_session(session_id: int, db_path: Path = DB_PATH) -> None:
+def close_session(
+    session_id: int,
+    total_analyzed: int | None = None,
+    db_path: Path = DB_PATH,
+) -> None:
     with get_connection(db_path) as conn:
-        conn.execute(
-            """
-            UPDATE production_sessions
-            SET ended_at = ?
-            WHERE id = ?
-            """,
-            (datetime.now().isoformat(timespec="seconds"), session_id),
-        )
+        if total_analyzed is None:
+            conn.execute(
+                """
+                UPDATE production_sessions
+                SET ended_at = ?
+                WHERE id = ?
+                """,
+                (datetime.now().isoformat(timespec="seconds"), session_id),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE production_sessions
+                SET ended_at = ?, total_analyzed = ?
+                WHERE id = ?
+                """,
+                (
+                    datetime.now().isoformat(timespec="seconds"),
+                    max(0, int(total_analyzed)),
+                    session_id,
+                ),
+            )
 
 
 def add_defect_event(
@@ -199,11 +226,12 @@ def build_lot_report_rows(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
                 s.product_description,
                 s.lot_code,
                 COUNT(DISTINCT s.id) AS sessions,
+                COALESCE(SUM(s.total_analyzed), 0) AS totale_analizzati,
                 COUNT(d.id) AS totale_scarti,
-                SUM(CASE WHEN d.defect_class = 'cotto' THEN 1 ELSE 0 END) AS cotto,
-                SUM(CASE WHEN d.defect_class = 'poco' THEN 1 ELSE 0 END) AS poco,
-                SUM(CASE WHEN d.defect_class = 'blob' THEN 1 ELSE 0 END) AS blob,
-                SUM(CASE WHEN d.defect_class = 'rotto' THEN 1 ELSE 0 END) AS rotto
+                COALESCE(SUM(CASE WHEN d.defect_class = 'cotto' THEN 1 ELSE 0 END), 0) AS cotto,
+                COALESCE(SUM(CASE WHEN d.defect_class = 'poco' THEN 1 ELSE 0 END), 0) AS poco,
+                COALESCE(SUM(CASE WHEN d.defect_class = 'blob' THEN 1 ELSE 0 END), 0) AS blob,
+                COALESCE(SUM(CASE WHEN d.defect_class = 'rotto' THEN 1 ELSE 0 END), 0) AS rotto
             FROM production_sessions s
             LEFT JOIN defect_events d ON d.session_id = s.id
             GROUP BY s.production_date, s.product_description, s.lot_code
@@ -211,7 +239,25 @@ def build_lot_report_rows(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
             """
         ).fetchall()
 
-    return [dict(row) for row in rows]
+    result = []
+    for row in rows:
+        item = dict(row)
+        analyzed = int(item.get("totale_analizzati") or 0)
+        for key in ("totale_scarti", "cotto", "poco", "blob", "rotto"):
+            item[key] = int(item.get(key) or 0)
+        item["scarto_pct"] = (
+            round(item["totale_scarti"] * 100.0 / analyzed, 2)
+            if analyzed > 0
+            else 0.0
+        )
+        for key in DEFECT_CLASSES:
+            item[f"{key}_pct"] = (
+                round(item[key] * 100.0 / analyzed, 2)
+                if analyzed > 0
+                else 0.0
+            )
+        result.append(item)
+    return result
 
 
 def build_session_report_rows(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
@@ -226,11 +272,12 @@ def build_session_report_rows(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
                 s.lot_code,
                 s.started_at,
                 s.ended_at,
+                COALESCE(s.total_analyzed, 0) AS totale_analizzati,
                 COUNT(d.id) AS totale_scarti,
-                SUM(CASE WHEN d.defect_class = 'cotto' THEN 1 ELSE 0 END) AS cotto,
-                SUM(CASE WHEN d.defect_class = 'poco' THEN 1 ELSE 0 END) AS poco,
-                SUM(CASE WHEN d.defect_class = 'blob' THEN 1 ELSE 0 END) AS blob,
-                SUM(CASE WHEN d.defect_class = 'rotto' THEN 1 ELSE 0 END) AS rotto
+                COALESCE(SUM(CASE WHEN d.defect_class = 'cotto' THEN 1 ELSE 0 END), 0) AS cotto,
+                COALESCE(SUM(CASE WHEN d.defect_class = 'poco' THEN 1 ELSE 0 END), 0) AS poco,
+                COALESCE(SUM(CASE WHEN d.defect_class = 'blob' THEN 1 ELSE 0 END), 0) AS blob,
+                COALESCE(SUM(CASE WHEN d.defect_class = 'rotto' THEN 1 ELSE 0 END), 0) AS rotto
             FROM production_sessions s
             LEFT JOIN defect_events d ON d.session_id = s.id
             WHERE s.ended_at IS NOT NULL
@@ -240,9 +287,28 @@ def build_session_report_rows(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
                 s.product_description,
                 s.lot_code,
                 s.started_at,
-                s.ended_at
+                s.ended_at,
+                s.total_analyzed
             ORDER BY s.id
             """
         ).fetchall()
 
-    return [dict(row) for row in rows]
+    result = []
+    for row in rows:
+        item = dict(row)
+        analyzed = int(item.get("totale_analizzati") or 0)
+        for key in ("totale_scarti", "cotto", "poco", "blob", "rotto"):
+            item[key] = int(item.get(key) or 0)
+        item["scarto_pct"] = (
+            round(item["totale_scarti"] * 100.0 / analyzed, 2)
+            if analyzed > 0
+            else 0.0
+        )
+        for key in DEFECT_CLASSES:
+            item[f"{key}_pct"] = (
+                round(item[key] * 100.0 / analyzed, 2)
+                if analyzed > 0
+                else 0.0
+            )
+        result.append(item)
+    return result
