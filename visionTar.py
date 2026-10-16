@@ -1090,6 +1090,7 @@ def process_video(
     progress_callback: Callable[[int, int], None] | None = None,
     frame_callback: Callable[[int, int, Any], None] | None = None,
     gate_callback: Callable[[list[int], str | None, int | None], None] | None = None,
+    defect_callback: Callable[[str, int], None] | None = None,
     model_instance: Any | None = None,
     trapdoor_count: int = DEFAULT_TRAPDOOR_COUNT,
 ) -> Path:
@@ -1293,6 +1294,9 @@ def process_video(
                         "gates": gate_numbers,
                     }
                     recent_gate_until = frame_number + max(8, int((video_fps or 25.0) * 0.45))
+
+                    if defect_callback is not None:
+                        defect_callback(str(track["final_label"]), int(track_id))
 
                     defect_writer.writerow(
                         [
