@@ -14,6 +14,7 @@ from acquisition_config import DEFAULT_BELT_WIDTH_CM, DEFAULT_PROFILE_KEY, DEFAU
 from database import (
     add_defect_event,
     build_lot_report_rows,
+    build_session_report_rows,
     close_session,
     create_session,
     get_session,
@@ -400,17 +401,20 @@ with left_col:
         f"{gate_width_cm:.1f} cm nominali per botola"
     )
 
-    with st.expander("Calibrazione ROI / deadline", expanded=False):
-        if st.button("Applica preset", use_container_width=True):
-            load_profile(selected_key)
-            st.session_state.display_mode = "calibration"
-            st.rerun()
+    st.markdown("#### Calibrazione")
+    if st.button("Applica preset", use_container_width=True):
+        load_profile(selected_key)
+        st.session_state.display_mode = "calibration"
+        st.rerun()
 
+    cal1, cal2 = st.columns(2)
+    with cal1:
         st.slider("ROI sinistra", 0, 45, key="roi_left")
-        st.slider("ROI destra", 0, 45, key="roi_right")
         st.slider("ROI alto", 0, 45, key="roi_top")
+    with cal2:
+        st.slider("ROI destra", 0, 45, key="roi_right")
         st.slider("ROI basso", 0, 45, key="roi_bottom")
-        st.slider("Deadline X", 0, 100, key="deadline_x")
+    st.slider("Deadline X", 0, 100, key="deadline_x")
 
     invalid_roi = (
         st.session_state.roi_left + st.session_state.roi_right >= 90
@@ -703,6 +707,35 @@ if start_clicked:
                                 imported += 1
 
                 close_session(session_id)
+
+                cumulative_rows = build_session_report_rows()
+                cumulative_fields = [
+                    "rilevazione_id",
+                    "production_date",
+                    "product_description",
+                    "lot_code",
+                    "started_at",
+                    "ended_at",
+                    "totale_scarti",
+                    "cotto",
+                    "poco",
+                    "blob",
+                    "rotto",
+                ]
+                cumulative_output = io.StringIO()
+                cumulative_writer = csv.DictWriter(
+                    cumulative_output,
+                    fieldnames=cumulative_fields,
+                    delimiter=";",
+                    lineterminator="\n",
+                )
+                cumulative_writer.writeheader()
+                cumulative_writer.writerows(cumulative_rows)
+                Path("report_lotti.csv").write_text(
+                    cumulative_output.getvalue(),
+                    encoding="utf-8-sig",
+                )
+
                 st.session_state.last_closed_session_id = session_id
                 st.session_state.analysis_summary = (
                     f"Sessione #{session_id} · {imported} scarti"
@@ -730,46 +763,45 @@ st.markdown(
 
 summary_session_id = st.session_state.get("last_closed_session_id")
 if summary_session_id is not None:
-    session = get_session(summary_session_id)
-    summary = get_session_summary(summary_session_id)
-
-    output = io.StringIO()
-    fieldnames = [
+    cumulative_rows = build_session_report_rows()
+    cumulative_fields = [
+        "rilevazione_id",
         "production_date",
         "product_description",
         "lot_code",
+        "started_at",
+        "ended_at",
         "totale_scarti",
         "cotto",
         "poco",
         "blob",
         "rotto",
     ]
-    writer = csv.DictWriter(output, fieldnames=fieldnames)
+
+    output = io.StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=cumulative_fields,
+        delimiter=";",
+        lineterminator="\n",
+    )
     writer.writeheader()
-    writer.writerow(
-        {
-            "production_date": session["production_date"],
-            "product_description": session["product_description"],
-            "lot_code": session["lot_code"],
-            "totale_scarti": summary["totale_scarti"],
-            "cotto": summary["cotto"],
-            "poco": summary["poco"],
-            "blob": summary["blob"],
-            "rotto": summary["rotto"],
-        }
+    writer.writerows(cumulative_rows)
+
+    st.markdown("#### Registro produzioni")
+    st.dataframe(
+        cumulative_rows,
+        use_container_width=True,
+        hide_index=True,
+        height=180,
     )
 
     dl1, dl2, dl3 = st.columns([0.38, 0.38, 0.24])
-    lot_file_name = (
-        f"lotto_{safe_name(session['lot_code'])}_"
-        f"{safe_name(session['product_description'])}.csv"
-    )
-
     with dl1:
         st.download_button(
-            "Report lotto",
+            "Scarica report_lotti.csv",
             data=output.getvalue().encode("utf-8-sig"),
-            file_name=lot_file_name,
+            file_name="report_lotti.csv",
             mime="text/csv",
             use_container_width=True,
         )
