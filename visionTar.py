@@ -499,42 +499,47 @@ def draw_trapdoor_simulator(
     active_gates: list[int] | None = None,
     label: str | None = None,
     track_id: int | None = None,
+    roi_rect: tuple[int, int, int, int] | None = None,
 ) -> None:
-    """Disegna con OpenCV il banco botole e simula l'attivazione dello scarto."""
+    """Disegna verticalmente il banco botole, coerente con la sezione del nastro."""
     gates = max(1, int(trapdoor_count))
     active = set(active_gates or [])
     height, width = frame.shape[:2]
 
-    panel_h = max(46, int(height * 0.10))
-    y1 = max(0, height - panel_h)
-    cv2.rectangle(frame, (0, y1), (width - 1, height - 1), (18, 22, 28), -1)
+    if roi_rect is None:
+        rx1, ry1, rx2, ry2 = 0, 0, width, height
+    else:
+        rx1, ry1, rx2, ry2 = roi_rect
 
-    margin = 8
-    label_h = 18
-    cell_y1 = y1 + label_h
-    cell_y2 = height - 7
-    usable_w = max(1, width - (margin * 2))
-    cell_w = usable_w / gates
+    roi_w = max(1, rx2 - rx1)
+    roi_h = max(1, ry2 - ry1)
+    panel_w = max(54, int(roi_w * 0.12))
+    x2 = max(rx1 + 1, rx2 - 4)
+    x1 = max(rx1, x2 - panel_w)
 
-    title = "SIMULATORE SCARTO"
-    if active:
-        suffix = f" | ID {track_id} {str(label).upper()} | BOTOLA "
-        suffix += ",".join(str(g) for g in sorted(active))
-        title += suffix
+    cv2.rectangle(frame, (x1, ry1), (x2, ry2), (18, 22, 28), -1)
+
+    title = "BOT."
     cv2.putText(
         frame,
         title,
-        (margin, y1 + 14),
+        (x1 + 6, min(ry2 - 6, ry1 + 15)),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.42,
+        0.40,
         (235, 235, 235),
         1,
         cv2.LINE_AA,
     )
 
+    top_margin = 20
+    usable_h = max(1, roi_h - top_margin)
+    cell_h = usable_h / gates
+    cell_x1 = x1 + 4
+    cell_x2 = x2 - 4
+
     for gate in range(1, gates + 1):
-        gx1 = int(margin + (gate - 1) * cell_w)
-        gx2 = int(margin + gate * cell_w) - 2
+        gy1 = int(ry1 + top_margin + (gate - 1) * cell_h)
+        gy2 = int(ry1 + top_margin + gate * cell_h) - 1
         if gate in active:
             fill = (0, 0, 235)
             border = (255, 255, 255)
@@ -542,22 +547,33 @@ def draw_trapdoor_simulator(
             fill = (55, 65, 75)
             border = (110, 120, 130)
 
-        cv2.rectangle(frame, (gx1, cell_y1), (gx2, cell_y2), fill, -1)
-        cv2.rectangle(frame, (gx1, cell_y1), (gx2, cell_y2), border, 1)
+        cv2.rectangle(frame, (cell_x1, gy1), (cell_x2, gy2), fill, -1)
+        cv2.rectangle(frame, (cell_x1, gy1), (cell_x2, gy2), border, 1)
 
         if gates <= 20 or gate in active:
-            text = str(gate)
-            text_x = gx1 + max(1, int((gx2 - gx1) * 0.24))
             cv2.putText(
                 frame,
-                text,
-                (text_x, cell_y2 - 5),
+                str(gate),
+                (cell_x1 + 3, max(gy1 + 9, gy2 - 2)),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.31,
+                0.26,
                 (255, 255, 255),
                 1,
                 cv2.LINE_AA,
             )
+
+    if active:
+        text = f"ID {track_id} {str(label).upper()} -> " + ",".join(str(g) for g in sorted(active))
+        cv2.putText(
+            frame,
+            text,
+            (rx1 + 8, max(ry1 + 18, ry2 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.42,
+            (255, 255, 255),
+            1,
+            cv2.LINE_AA,
+        )
 
 
 def box_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
@@ -1930,6 +1946,7 @@ def process_video(
                     active_gates=active_gates,
                     label=active_label,
                     track_id=active_track_id,
+                    roi_rect=(roi_x1, roi_y1, roi_x2, roi_y2),
                 )
 
                 if annotated_writer is not None:
