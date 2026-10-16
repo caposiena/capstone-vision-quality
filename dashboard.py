@@ -308,16 +308,16 @@ with meta2:
 with meta3:
     lot_code = st.text_input("Lotto", placeholder="L251016A")
 
-left_col, center_col, right_col = st.columns([0.23, 0.47, 0.30], gap="small")
+left_col, center_col, right_col = st.columns([0.18, 0.52, 0.30], gap="small")
 
 with left_col:
     st.markdown("#### Input")
 
     source_mode = st.selectbox(
-        "Sorgente input",
+        "Sorgente",
         ["Video registrato", "Videocamera USB"],
         index=0,
-        help="Seleziona un file video oppure una videocamera USB collegata al dispositivo.",
+        help="File video oppure videocamera USB.",
     )
 
     uploaded = None
@@ -401,20 +401,23 @@ with left_col:
         f"{gate_width_cm:.1f} cm nominali per botola"
     )
 
-    st.markdown("#### Calibrazione")
-    if st.button("Applica preset", use_container_width=True):
-        load_profile(selected_key)
-        st.session_state.display_mode = "calibration"
-        st.rerun()
+    cal_title, cal_preset = st.columns([0.58, 0.42])
+    with cal_title:
+        st.markdown("#### Calibrazione")
+    with cal_preset:
+        if st.button("Preset", use_container_width=True):
+            load_profile(selected_key)
+            st.session_state.display_mode = "calibration"
+            st.rerun()
 
     cal1, cal2 = st.columns(2)
     with cal1:
-        st.slider("ROI sinistra", 0, 45, key="roi_left")
-        st.slider("ROI alto", 0, 45, key="roi_top")
+        st.slider("SX", 0, 45, key="roi_left")
+        st.slider("ALTO", 0, 45, key="roi_top")
     with cal2:
-        st.slider("ROI destra", 0, 45, key="roi_right")
-        st.slider("ROI basso", 0, 45, key="roi_bottom")
-    st.slider("Deadline X", 0, 100, key="deadline_x")
+        st.slider("DX", 0, 45, key="roi_right")
+        st.slider("BASSO", 0, 45, key="roi_bottom")
+    st.slider("DEADLINE", 0, 100, key="deadline_x")
 
     invalid_roi = (
         st.session_state.roi_left + st.session_state.roi_right >= 90
@@ -571,6 +574,110 @@ with right_col:
         status_box.success(st.session_state.analysis_summary)
     else:
         status_box.caption("Pronto per la sessione.")
+
+    cumulative_rows_ui = build_session_report_rows()
+    if cumulative_rows_ui:
+        lot_codes_ui = list(dict.fromkeys(row["lot_code"] for row in cumulative_rows_ui))
+        st.markdown("#### Esportazione")
+        export_mode_ui = st.selectbox(
+            "Modalità export",
+            ["Seleziona lotto", "Lotto da - a", "Esporta tutti"],
+            label_visibility="collapsed",
+            key="export_mode_ui",
+        )
+
+        filtered_rows_ui = cumulative_rows_ui
+        export_suffix_ui = "tutti"
+
+        if export_mode_ui == "Seleziona lotto":
+            selected_lot_ui = st.selectbox(
+                "Lotto",
+                lot_codes_ui,
+                key="export_single_lot_ui",
+            )
+            filtered_rows_ui = [
+                row for row in cumulative_rows_ui
+                if row["lot_code"] == selected_lot_ui
+            ]
+            export_suffix_ui = safe_name(selected_lot_ui)
+
+        elif export_mode_ui == "Lotto da - a":
+            range_ui_1, range_ui_2 = st.columns(2)
+            with range_ui_1:
+                lot_from_ui = st.selectbox(
+                    "Da",
+                    lot_codes_ui,
+                    index=0,
+                    key="export_lot_from_ui",
+                )
+            with range_ui_2:
+                lot_to_ui = st.selectbox(
+                    "A",
+                    lot_codes_ui,
+                    index=len(lot_codes_ui) - 1,
+                    key="export_lot_to_ui",
+                )
+
+            start_ui = lot_codes_ui.index(lot_from_ui)
+            end_ui = lot_codes_ui.index(lot_to_ui)
+            if start_ui > end_ui:
+                start_ui, end_ui = end_ui, start_ui
+            selected_range_ui = set(lot_codes_ui[start_ui:end_ui + 1])
+            filtered_rows_ui = [
+                row for row in cumulative_rows_ui
+                if row["lot_code"] in selected_range_ui
+            ]
+            export_suffix_ui = (
+                f"{safe_name(lot_codes_ui[start_ui])}_"
+                f"{safe_name(lot_codes_ui[end_ui])}"
+            )
+
+        export_rows_ui = [
+            {
+                "Rilevazione": row["rilevazione_id"],
+                "Data produzione": row["production_date"],
+                "Prodotto": row["product_description"],
+                "Lotto": row["lot_code"],
+                "Inizio": row["started_at"],
+                "Fine": row["ended_at"],
+                "Totale scarti": row["totale_scarti"],
+                "Cotto": row["cotto"],
+                "Poco": row["poco"],
+                "Blob": row["blob"],
+                "Rotto": row["rotto"],
+            }
+            for row in filtered_rows_ui
+        ]
+        export_fields_ui = [
+            "Rilevazione",
+            "Data produzione",
+            "Prodotto",
+            "Lotto",
+            "Inizio",
+            "Fine",
+            "Totale scarti",
+            "Cotto",
+            "Poco",
+            "Blob",
+            "Rotto",
+        ]
+        export_output_ui = io.StringIO()
+        export_writer_ui = csv.DictWriter(
+            export_output_ui,
+            fieldnames=export_fields_ui,
+            delimiter=";",
+            lineterminator="\n",
+        )
+        export_writer_ui.writeheader()
+        export_writer_ui.writerows(export_rows_ui)
+
+        st.download_button(
+            "Esporta CSV",
+            data=export_output_ui.getvalue().encode("utf-8-sig"),
+            file_name=f"report_lotti_{export_suffix_ui}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
 
 if start_clicked:
     if not DEFAULT_MODEL_PATH.exists():
@@ -806,111 +913,3 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-summary_session_id = st.session_state.get("last_closed_session_id")
-if summary_session_id is not None:
-    cumulative_rows = build_session_report_rows()
-    lot_codes = list(dict.fromkeys(row["lot_code"] for row in cumulative_rows))
-
-    st.markdown("#### Esportazione")
-    export_mode = st.selectbox(
-        "Esporta",
-        ["Seleziona lotto", "Lotto da - a", "Esporta tutti"],
-        label_visibility="collapsed",
-    )
-
-    filtered_rows = cumulative_rows
-    export_suffix = "tutti"
-
-    if export_mode == "Seleziona lotto" and lot_codes:
-        selected_lot = st.selectbox("Lotto", lot_codes)
-        filtered_rows = [
-            row for row in cumulative_rows
-            if row["lot_code"] == selected_lot
-        ]
-        export_suffix = safe_name(selected_lot)
-
-    elif export_mode == "Lotto da - a" and lot_codes:
-        range_col1, range_col2 = st.columns(2)
-        with range_col1:
-            lot_from = st.selectbox("Lotto da", lot_codes, index=0)
-        with range_col2:
-            lot_to = st.selectbox("Lotto a", lot_codes, index=len(lot_codes) - 1)
-
-        start_index = lot_codes.index(lot_from)
-        end_index = lot_codes.index(lot_to)
-        if start_index > end_index:
-            start_index, end_index = end_index, start_index
-
-        selected_range = set(lot_codes[start_index:end_index + 1])
-        filtered_rows = [
-            row for row in cumulative_rows
-            if row["lot_code"] in selected_range
-        ]
-        export_suffix = (
-            f"{safe_name(lot_codes[start_index])}_"
-            f"{safe_name(lot_codes[end_index])}"
-        )
-
-    export_rows = [
-        {
-            "Rilevazione": row["rilevazione_id"],
-            "Data produzione": row["production_date"],
-            "Prodotto": row["product_description"],
-            "Lotto": row["lot_code"],
-            "Inizio": row["started_at"],
-            "Fine": row["ended_at"],
-            "Totale scarti": row["totale_scarti"],
-            "Cotto": row["cotto"],
-            "Poco": row["poco"],
-            "Blob": row["blob"],
-            "Rotto": row["rotto"],
-        }
-        for row in filtered_rows
-    ]
-
-    export_fields = [
-        "Rilevazione",
-        "Data produzione",
-        "Prodotto",
-        "Lotto",
-        "Inizio",
-        "Fine",
-        "Totale scarti",
-        "Cotto",
-        "Poco",
-        "Blob",
-        "Rotto",
-    ]
-
-    output = io.StringIO()
-    writer = csv.DictWriter(
-        output,
-        fieldnames=export_fields,
-        delimiter=";",
-        lineterminator="\n",
-    )
-    writer.writeheader()
-    writer.writerows(export_rows)
-
-    export_col1, export_col2, export_col3 = st.columns([0.38, 0.38, 0.24])
-    with export_col1:
-        st.download_button(
-            "Esporta CSV",
-            data=output.getvalue().encode("utf-8-sig"),
-            file_name=f"report_lotti_{export_suffix}.csv",
-            mime="text/csv",
-            use_container_width=True,
-        )
-
-    if (
-        st.session_state.machine_events_bytes
-        and st.session_state.machine_events_filename
-    ):
-        with export_col2:
-            st.download_button(
-                "Eventi macchina",
-                data=st.session_state.machine_events_bytes,
-                file_name=st.session_state.machine_events_filename,
-                mime="text/csv",
-                use_container_width=True,
-            )
