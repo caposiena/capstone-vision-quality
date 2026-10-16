@@ -949,6 +949,21 @@ def calculate_final_verdict(
         if sticky_poco_lab_l_values
         else 0.0
     )
+    sticky_poco_max_lab_l = (
+        max(sticky_poco_lab_l_values)
+        if sticky_poco_lab_l_values
+        else 0.0
+    )
+
+    # Latch prudenziale: due o piu letture YOLO POCO abbastanza coerenti
+    # restano valide fino alla deadline se almeno una osservazione ha la
+    # luminosita forte gia validata (Lab L >= 208) e la mediana resta >=198.
+    sticky_poco_confirmed = (
+        sticky_poco_hits >= POCO_COLOR_MIN_OBSERVATIONS
+        and sticky_poco_avg_confidence >= 0.55
+        and sticky_poco_max_lab_l >= POCO_FINAL_MIN_LAB_L
+        and sticky_poco_lab_l >= POCO_MIN_LAB_L
+    )
 
     poco_strong_confirmation = (
         (
@@ -957,7 +972,7 @@ def calculate_final_verdict(
             and poco_lab_l >= POCO_FINAL_MIN_LAB_L
             and poco_s <= POCO_MAX_S
         )
-        or sticky_poco_hits >= POCO_COLOR_MIN_OBSERVATIONS
+        or sticky_poco_confirmed
     )
     if poco_strong_confirmation:
         return {
@@ -1728,9 +1743,6 @@ def process_video(
                     if (
                         track["final_label"] is None
                         and det["label"] == "poco"
-                        and det["color"]["v"] >= POCO_MIN_V
-                        and det["color"]["lab_l"] >= POCO_FINAL_MIN_LAB_L
-                        and det["color"]["s"] <= POCO_MAX_S
                     ):
                         track["sticky_poco_evidence"].append(
                             {
