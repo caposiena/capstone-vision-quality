@@ -471,6 +471,95 @@ CLASS_COLORS = {
 }
 
 
+def map_bbox_to_trapdoors(
+    bbox: tuple[int, int, int, int],
+    roi_y1: int,
+    roi_y2: int,
+    trapdoor_count: int,
+) -> tuple[float, float, int, int, list[int]]:
+    """Mappa l'estensione trasversale della bbox sulle botole del nastro."""
+    _bx1, by1, _bx2, by2 = bbox
+    belt_height = max(1, roi_y2 - roi_y1)
+    belt_y1 = max(0.0, min(1.0, (by1 - roi_y1) / belt_height))
+    belt_y2 = max(0.0, min(1.0, (by2 - roi_y1) / belt_height))
+    if belt_y2 < belt_y1:
+        belt_y1, belt_y2 = belt_y2, belt_y1
+
+    gates = max(1, int(trapdoor_count))
+    gate_from = min(gates, int(belt_y1 * gates) + 1)
+    gate_to = min(gates, int(max(0.0, belt_y2 - 1e-9) * gates) + 1)
+    gate_to = max(gate_from, gate_to)
+    gate_list = list(range(gate_from, gate_to + 1))
+    return belt_y1, belt_y2, gate_from, gate_to, gate_list
+
+
+def draw_trapdoor_simulator(
+    frame,
+    trapdoor_count: int,
+    active_gates: list[int] | None = None,
+    label: str | None = None,
+    track_id: int | None = None,
+) -> None:
+    """Disegna con OpenCV il banco botole e simula l'attivazione dello scarto."""
+    gates = max(1, int(trapdoor_count))
+    active = set(active_gates or [])
+    height, width = frame.shape[:2]
+
+    panel_h = max(46, int(height * 0.10))
+    y1 = max(0, height - panel_h)
+    cv2.rectangle(frame, (0, y1), (width - 1, height - 1), (18, 22, 28), -1)
+
+    margin = 8
+    label_h = 18
+    cell_y1 = y1 + label_h
+    cell_y2 = height - 7
+    usable_w = max(1, width - (margin * 2))
+    cell_w = usable_w / gates
+
+    title = "SIMULATORE SCARTO"
+    if active:
+        suffix = f" | ID {track_id} {str(label).upper()} | BOTOLA "
+        suffix += ",".join(str(g) for g in sorted(active))
+        title += suffix
+    cv2.putText(
+        frame,
+        title,
+        (margin, y1 + 14),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.42,
+        (235, 235, 235),
+        1,
+        cv2.LINE_AA,
+    )
+
+    for gate in range(1, gates + 1):
+        gx1 = int(margin + (gate - 1) * cell_w)
+        gx2 = int(margin + gate * cell_w) - 2
+        if gate in active:
+            fill = (0, 0, 235)
+            border = (255, 255, 255)
+        else:
+            fill = (55, 65, 75)
+            border = (110, 120, 130)
+
+        cv2.rectangle(frame, (gx1, cell_y1), (gx2, cell_y2), fill, -1)
+        cv2.rectangle(frame, (gx1, cell_y1), (gx2, cell_y2), border, 1)
+
+        if gates <= 20 or gate in active:
+            text = str(gate)
+            text_x = gx1 + max(1, int((gx2 - gx1) * 0.24))
+            cv2.putText(
+                frame,
+                text,
+                (text_x, cell_y2 - 5),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.31,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+
+
 def box_iou(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
     """Calcola Intersection over Union tra due bounding box."""
     ax1, ay1, ax2, ay2 = a
@@ -1042,6 +1131,8 @@ def process_video(
     next_track_id = 1
     recent_final = None
     recent_final_until = 0
+    recent_gate_event = None
+    recent_gate_until = 0
     finalized_track_ids = set()
 
     try:
@@ -1124,6 +1215,7 @@ def process_video(
 
             def persist_final_track(track_id, track) -> None:
                 """Scrive una sola riga per ogni tarallo finalizzato."""
+                nonlocal recent_gate_event, recent_gate_until
                 if track_id in finalized_track_ids or track["final_label"] is None:
                     return
 
@@ -1170,17 +1262,20 @@ def process_video(
                     by1 = max(0, min(frame_height - 1, int(by1)))
                     by2 = max(by1 + 1, min(frame_height, int(by2)))
 
-                    belt_height = max(1, roi_y2 - roi_y1)
-                    belt_y1 = max(0.0, min(1.0, (by1 - roi_y1) / belt_height))
-                    belt_y2 = max(0.0, min(1.0, (by2 - roi_y1) / belt_height))
-                    if belt_y2 < belt_y1:
-                        belt_y1, belt_y2 = belt_y2, belt_y1
+                    belt_y1, belt_y2, gate_from, gate_to, gate_numbers = map_bbox_to_trapdoors(
+                        (bx1, by1, bx2, by2),
+                        roi_y1,
+                        roi_y2,
+                        trapdoor_count,
+                    )
+                    gate_list = ";".join(str(idx) for idx in gate_numbers)
 
-                    gates = max(1, int(trapdoor_count))
-                    gate_from = min(gates, int(belt_y1 * gates) + 1)
-                    gate_to = min(gates, int(max(0.0, belt_y2 - 1e-9) * gates) + 1)
-                    gate_to = max(gate_from, gate_to)
-                    gate_list = ";".join(str(idx) for idx in range(gate_from, gate_to + 1))
+                    recent_gate_event = {
+                        "track_id": track_id,
+                        "label": track["final_label"],
+                        "gates": gate_numbers,
+                    }
+                    recent_gate_until = frame_number + max(8, int((video_fps or 25.0) * 0.45))
 
                     defect_writer.writerow(
                         [
@@ -1819,6 +1914,22 @@ def process_video(
                     (255, 255, 255),
                     2,
                     cv2.LINE_AA,
+                )
+
+                active_gates = []
+                active_label = None
+                active_track_id = None
+                if recent_gate_event is not None and frame_number <= recent_gate_until:
+                    active_gates = list(recent_gate_event["gates"])
+                    active_label = str(recent_gate_event["label"])
+                    active_track_id = int(recent_gate_event["track_id"])
+
+                draw_trapdoor_simulator(
+                    frame,
+                    trapdoor_count,
+                    active_gates=active_gates,
+                    label=active_label,
+                    track_id=active_track_id,
                 )
 
                 if annotated_writer is not None:
