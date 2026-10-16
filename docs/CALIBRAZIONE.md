@@ -1,56 +1,22 @@
 # Calibrazione e validazione
 
-La baseline V1 è stata definita mediante prove su video reali e confronto con conteggi manuali dei difetti.
+La calibrazione è stata eseguita sui video acquisiti sulla linea di prova. Il video 2 è stato usato come riferimento principale; il video 3 è stato tenuto separato per la verifica successiva.
 
-Il video 2 è stato utilizzato come riferimento di calibrazione. La pipeline combina detection frame per frame, tracking leggero e un responso finale univoco per ogni track. Per i difetti di cottura viene utilizzato un supporto basato su descrittori HSV e Lab; per la classe `rotto` vengono considerati anche indicatori geometrici quali circolarità, solidità, rapporto larghezza/altezza ed extent. La deadline è posizionata prima delle zone maggiormente influenzate da riflessi o variazioni di illuminazione.
+La decisione finale non usa soltanto la classe restituita da YOLO nell'ultimo frame. Le detection dello stesso pezzo vengono associate in un track e valutate prima della deadline. Per `cotto` e `poco` vengono considerati anche i descrittori HSV e Lab. Per `rotto` entrano nel controllo anche circolarità, solidità, aspect ratio ed extent.
 
-## Video 2 - calibrazione
+La deadline è stata collocata in una zona dell'immagine precedente ai riflessi più evidenti. ROI e deadline dipendono dall'inquadratura; le soglie del classificatore rimangono invece invariate tra i video validati.
 
-Conteggio manuale:
-- cotto: 6
-- poco: 5
-- blob: 7
-- rotto: 14
+## Risultati
 
-Risultato della baseline:
-- cotto: 6
-- poco: 5
-- blob: 6
-- rotto: 15
+| Prova | Cotto | Poco | Blob | Rotto |
+|---|---:|---:|---:|---:|
+| Video 2 - manuale | 6 | 5 | 7 | 14 |
+| Video 2 - sistema | 6 | 5 | 6 | 15 |
+| Video 3 - manuale | 2 | 3 | 1 | 8 |
+| Video 3 - sistema | 2 | 3 | 1 | 9 |
 
-## Video 3 - validazione indipendente
+Il video 1 è stato utilizzato come prova di robustezza perché presenta zoom diverso e illuminazione meno uniforme. In questo caso è disponibile un conteggio manuale verificato solo per la classe `rotto`: 14 pezzi. Il sistema ne restituisce 17.
 
-Conteggio manuale:
-- cotto: 2
-- poco: 3
-- blob: 1
-- rotto: 8
+Il comportamento del video 1 conferma che la parte geometrica è sensibile a distanza di ripresa e illuminazione. Per un impiego su linea reale servono quindi camera fissa, distanza costante, illuminazione controllata e prodotto disposto su singolo strato.
 
-Risultato della baseline:
-- cotto: 2
-- poco: 3
-- blob: 1
-- rotto: 9
-
-## Video 1 - prova di robustezza
-
-Il video 1 presenta uno zoom differente e condizioni di illuminazione meno uniformi, inclusa un'ombra nella fase iniziale. Per questa prova sono stati adattati ROI e deadline senza modificare le soglie di classificazione.
-
-Riferimento manuale disponibile:
-- rotto: 14
-
-Risultato della baseline:
-- rotto: 17
-
-Il test evidenzia la sensibilità della componente geometrica a distanza di ripresa, zoom e illuminazione.
-
-## Condizioni di utilizzo
-
-Per una futura installazione industriale sono raccomandati:
-- camera fissa;
-- distanza di ripresa costante;
-- illuminazione controllata;
-- prodotto disposto su singolo strato;
-- calibrazione coerente della ROI rispetto alla larghezza utile del nastro.
-
-Le soglie di classificazione della baseline V1 restano congelate; eventuali modifiche devono essere motivate da evidenze ripetibili su nuovi dati.
+Dopo il confronto sui tre video le soglie della baseline V1 sono state congelate.
