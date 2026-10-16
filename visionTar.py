@@ -692,8 +692,12 @@ def extract_shape_features(frame, x1: int, y1: int, x2: int, y2: int) -> dict[st
     }
 
 
-def calculate_final_verdict(observations) -> dict[str, float | str]:
+def calculate_final_verdict(
+    observations,
+    sticky_poco_evidence: list[dict[str, float]] | None = None,
+) -> dict[str, float | str]:
     """Calcola il responso finale a due stadi con supporto colore prudenziale."""
+    sticky_poco_evidence = sticky_poco_evidence or []
     if len(observations) < TRACK_MIN_FINAL_OBSERVATIONS:
         return {
             "label": "incerto",
@@ -931,17 +935,38 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
     # almeno due volte come poco e quelle osservazioni hanno il profilo
     # cromatico forte gia validato (in particolare Lab L >= 208), il
     # responso resta poco anche se gli ultimi frame oscillano verso buono.
+    sticky_poco_hits = len(sticky_poco_evidence)
+    sticky_poco_avg_confidence = (
+        sum(item["confidence"] for item in sticky_poco_evidence) / sticky_poco_hits
+        if sticky_poco_hits > 0
+        else 0.0
+    )
+    sticky_poco_lab_l_values = sorted(
+        item["lab_l"] for item in sticky_poco_evidence
+    )
+    sticky_poco_lab_l = (
+        float(sticky_poco_lab_l_values[sticky_poco_hits // 2])
+        if sticky_poco_lab_l_values
+        else 0.0
+    )
+
     poco_strong_confirmation = (
-        candidate_label == "poco"
-        and poco_observations >= POCO_COLOR_MIN_OBSERVATIONS
-        and poco_v >= POCO_MIN_V
-        and poco_lab_l >= POCO_FINAL_MIN_LAB_L
-        and poco_s <= POCO_MAX_S
+        (
+            poco_observations >= POCO_COLOR_MIN_OBSERVATIONS
+            and poco_v >= POCO_MIN_V
+            and poco_lab_l >= POCO_FINAL_MIN_LAB_L
+            and poco_s <= POCO_MAX_S
+        )
+        or sticky_poco_hits >= POCO_COLOR_MIN_OBSERVATIONS
     )
     if poco_strong_confirmation:
         return {
             "label": "poco",
-            "confidence": poco_avg_confidence,
+            "confidence": (
+                sticky_poco_avg_confidence
+                if sticky_poco_hits >= POCO_COLOR_MIN_OBSERVATIONS
+                else poco_avg_confidence
+            ),
             "state": "FINALE",
             "defect_share": defect_share,
             "class_share": class_share,
@@ -949,7 +974,11 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "color_support": "poco_forte",
             "track_v": track_v,
             "track_s": track_s,
-            "track_lab_l": poco_lab_l,
+            "track_lab_l": (
+                sticky_poco_lab_l
+                if sticky_poco_hits >= POCO_COLOR_MIN_OBSERVATIONS
+                else poco_lab_l
+            ),
             "shape_support": shape_support,
             "shape_anomalies": shape_anomalies,
             "track_circularity": track_circularity,
@@ -1649,6 +1678,7 @@ def process_video(
                             "area": max(1, (det["x2"] - det["x1"]) * (det["y2"] - det["y1"])),
                             "last_frame": frame_number,
                             "observations": deque(maxlen=TRACK_OBSERVATION_WINDOW),
+                            "sticky_poco_evidence": [],
                             "final_label": None,
                             "final_confidence": None,
                             "final_frame": None,
@@ -1692,8 +1722,26 @@ def process_video(
                     track["area"] = det_area
                     track["last_frame"] = frame_number
 
+                    # Memoria persistente solo per evidenza POCO forte: evita che
+                    # due rilevazioni valide vengano espulse dalla finestra mobile
+                    # se gli ultimi frame oscillano poi verso BUONO.
+                    if (
+                        track["final_label"] is None
+                        and det["label"] == "poco"
+                        and det["color"]["v"] >= POCO_MIN_V
+                        and det["color"]["lab_l"] >= POCO_FINAL_MIN_LAB_L
+                        and det["color"]["s"] <= POCO_MAX_S
+                    ):
+                        track["sticky_poco_evidence"].append(
+                            {
+                                "confidence": float(det["confidence"]),
+                                "lab_l": float(det["color"]["lab_l"]),
+                            }
+                        )
+
                     # Conserva solo le osservazioni piu recenti prima della deadline,
-                    # cosi la decisione non viene contaminata da classificazioni lontane.
+                    # cosi la decisione ordinaria non viene contaminata da
+                    # classificazioni lontane.
                     if track["final_label"] is None:
                         track["observations"].append(
                             {
@@ -1712,7 +1760,10 @@ def process_video(
                     )
 
                     if track["final_label"] is None and crossed:
-                        verdict = calculate_final_verdict(list(track["observations"]))
+                        verdict = calculate_final_verdict(
+                            list(track["observations"]),
+                            sticky_poco_evidence=track.get("sticky_poco_evidence", []),
+                        )
                         final_label = str(verdict["label"])
                         final_conf = float(verdict["confidence"])
                         final_state = str(verdict["state"])
@@ -1920,7 +1971,10 @@ def process_video(
                             and moving_toward_deadline
                             and predicted_cross
                         ):
-                            verdict = calculate_final_verdict(list(track["observations"]))
+                            verdict = calculate_final_verdict(
+                                list(track["observations"]),
+                                sticky_poco_evidence=track.get("sticky_poco_evidence", []),
+                            )
                             track["final_label"] = str(verdict["label"])
                             track["final_confidence"] = float(verdict["confidence"])
                             track["final_frame"] = frame_number
