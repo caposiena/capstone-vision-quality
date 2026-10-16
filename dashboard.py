@@ -448,6 +448,15 @@ with left_col:
     if invalid_roi:
         st.error("ROI non valida.")
 
+    selected_preset_values = PROFILES[selected_key].as_percentages()
+    calibration_matches_preset = (
+        st.session_state.roi_left == selected_preset_values["left"]
+        and st.session_state.roi_right == selected_preset_values["right"]
+        and st.session_state.roi_top == selected_preset_values["top"]
+        and st.session_state.roi_bottom == selected_preset_values["bottom"]
+        and st.session_state.deadline_x == selected_preset_values["deadline"]
+    )
+
     profile = PROFILES[st.session_state.profile_key]
 
 with center_col:
@@ -556,6 +565,8 @@ with right_col:
 
     if source_mode == "Videocamera USB":
         st.caption("Live camera predisposto; validazione Capstone eseguita su video registrato.")
+    elif not calibration_matches_preset:
+        st.warning("Calibrazione modificata rispetto al preset: i conteggi possono cambiare.")
 
     st.markdown("#### Scarti")
     summary_session_id = st.session_state.get("last_closed_session_id")
