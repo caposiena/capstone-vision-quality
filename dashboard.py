@@ -667,56 +667,54 @@ with right_col:
             use_container_width=True,
         )
 
-bottom_space, bottom_settings = st.columns([0.38, 0.62], gap="small")
-with bottom_settings:
-    st.markdown("#### Area nastro")
-    belt1, belt2, belt3, belt4, belt5, belt6, belt7, belt8 = st.columns(
-        [0.09, 0.11, 0.13, 0.13, 0.13, 0.13, 0.15, 0.13],
-        gap="small",
-    )
+st.markdown("#### Area nastro")
+belt1, belt2, belt3, belt4, belt5, belt6, belt7, belt8 = st.columns(
+    [0.08, 0.09, 0.14, 0.14, 0.14, 0.14, 0.15, 0.12],
+    gap="small",
+)
 
-    with belt1:
-        st.number_input(
-            "Botole",
-            min_value=2,
-            max_value=40,
-            step=1,
-            key="trapdoor_count",
-        )
-    with belt2:
-        st.number_input(
-            "Nastro cm",
-            min_value=10.0,
-            max_value=120.0,
-            step=1.0,
-            key="belt_width_cm",
-        )
-    with belt3:
-        st.slider("SX", 0, 45, key="roi_left")
-    with belt4:
-        st.slider("DX", 0, 45, key="roi_right")
-    with belt5:
-        st.slider("ALTO", 0, 45, key="roi_top")
-    with belt6:
-        st.slider("BASSO", 0, 45, key="roi_bottom")
-    with belt7:
-        st.slider("DEADLINE", 0, 100, key="deadline_x")
-    with belt8:
-        st.write("")
-        if st.button("Preset", use_container_width=True):
-            load_profile(st.session_state.profile_key)
-            st.session_state.display_mode = "calibration"
-            st.rerun()
+with belt1:
+    st.number_input(
+        "Botole",
+        min_value=2,
+        max_value=40,
+        step=1,
+        key="trapdoor_count",
+    )
+with belt2:
+    st.number_input(
+        "Nastro cm",
+        min_value=10.0,
+        max_value=120.0,
+        step=1.0,
+        key="belt_width_cm",
+    )
+with belt3:
+    st.slider("SX", 0, 45, key="roi_left")
+with belt4:
+    st.slider("DX", 0, 45, key="roi_right")
+with belt5:
+    st.slider("ALTO", 0, 45, key="roi_top")
+with belt6:
+    st.slider("BASSO", 0, 45, key="roi_bottom")
+with belt7:
+    st.slider("DEADLINE", 0, 100, key="deadline_x")
+with belt8:
+    st.write("")
+    if st.button("Preset", use_container_width=True):
+        load_profile(st.session_state.profile_key)
+        st.session_state.display_mode = "calibration"
+        st.rerun()
 
-    gate_width_cm = (
-        st.session_state.belt_width_cm
-        / max(1, st.session_state.trapdoor_count)
-    )
-    st.caption(
-        f"{st.session_state.trapdoor_count} botole · "
-        f"{st.session_state.belt_width_cm:.0f} cm nastro · "
-        f"{gate_width_cm:.1f} cm/botola"
-    )
+gate_width_cm = (
+    st.session_state.belt_width_cm
+    / max(1, st.session_state.trapdoor_count)
+)
+st.caption(
+    f"{st.session_state.trapdoor_count} botole · "
+    f"{st.session_state.belt_width_cm:.0f} cm nastro · "
+    f"{gate_width_cm:.1f} cm/botola"
+)
 
 
 if start_clicked:
