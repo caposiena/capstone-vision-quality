@@ -118,3 +118,10 @@ La componente longitudinale non viene trasformata in un comando hardware nel Cap
 Il file tecnico scaricabile dalla dashboard è denominato `eventi_scarto_<lotto>_<prodotto>.csv`. Il report qualità per lotto resta invece sintetico e separato.
 
 La dashboard prevede due sorgenti di input: video registrato per la validazione del Capstone e videocamera USB per la futura acquisizione diretta. La modalità videocamera permette già di selezionare l'indice del dispositivo e acquisire un fotogramma di calibrazione; l'elaborazione continua live resta da validare quando sarà disponibile l'hardware.
+
+
+## Simulatore OpenCV delle botole
+
+La dashboard di produzione è stata resa compatta per un pannello da circa 15 pollici. Il flusso video resta centrale, mentre input/calibrazione e contatori sono disposti lateralmente per limitare lo scroll operativo.
+
+Il prototipo usa OpenCV anche per simulare visivamente il banco di scarto. La configurazione iniziale è un nastro da 40 cm diviso in 20 botole nominali da 2 cm. Quando un track viene finalizzato come difettoso, la bounding box viene mappata sulle zone trasversali interessate e il riquadro video evidenzia in rosso le botole candidate all'apertura. Questa visualizzazione è una simulazione software: la selezione delle botole è reale rispetto alle coordinate calcolate, mentre il momento fisico di apertura sarà affidato all'encoder quando l'hardware sarà disponibile.
