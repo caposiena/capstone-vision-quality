@@ -6,7 +6,7 @@ L'obiettivo è realizzare un prototipo capace di osservare un flusso di taralli 
 
 ## Stato del progetto
 
-La fase di addestramento e calibrazione della baseline V1 è conclusa.
+La fase di addestramento, calibrazione e validazione della baseline V1 è conclusa.
 
 Classi attuali:
 
@@ -34,9 +34,12 @@ capstone-vision-quality/
 ├── dashboard.py
 ├── acquisition_config.py
 ├── video_source.py
+├── database.py
 ├── trainTar.py
 ├── testTar.py
 ├── buildDatasetV2.py
+├── scripts/
+│   └── reset_test_db.ps1
 └── docs/
     ├── CALIBRAZIONE.md
     └── DATASET.md
@@ -64,7 +67,7 @@ capstone-vision-quality/
 
 Il flusso attuale è:
 
-video → ROI → YOLO → tracking → supporto colore/geometria → deadline → responso finale → CSV
+video → ROI → YOLO → tracking → supporto colore/geometria → deadline → responso finale → coordinate scarto → database/report
 
 Durante l'esecuzione vengono prodotti tre tipi di file:
 
@@ -104,7 +107,7 @@ La baseline V1 è integrata nella parte applicativa. La dashboard gestisce già 
 
 La dashboard è focalizzata sull'uso con video registrati, coerente con il perimetro della consegna. L'operatore inserisce data di produzione, descrizione prodotto e lotto, seleziona il video di prova e calibra ROI e deadline sul primo fotogramma. Dalla stessa schermata è possibile avviare l'analisi YOLO: `visionTar.py` viene eseguito in modalità headless e registra nella sessione i difetti finalizzati `cotto`, `poco`, `blob` e `rotto`.
 
-Il report finale scaricabile è `report_lotti.csv`, con data, prodotto, lotto, numero di sessioni, totale scarti e dettaglio per tipologia. Il collegamento a videocamera live, encoder e attuatore resta documentato come sviluppo successivo.
+Il report finale scaricabile è `report_lotti.csv`, con data, prodotto, lotto, numero di rilevazioni, totale analizzati, totale scarti e dettaglio per tipologia. Per ogni lotto il CSV separa i valori assoluti dalle percentuali. Il collegamento continuo a videocamera, encoder e attuatore resta uno sviluppo successivo.
 
 
 ## Predisposizione sistema di scarto
@@ -117,11 +120,11 @@ La componente longitudinale non viene trasformata in un comando hardware nel Cap
 
 Il file tecnico scaricabile dalla dashboard è denominato `eventi_scarto_<lotto>_<prodotto>.csv`. Il report qualità per lotto resta invece sintetico e separato.
 
-La dashboard prevede due sorgenti di input: video registrato per la validazione del Capstone e videocamera USB per la futura acquisizione diretta. La modalità videocamera permette già di selezionare l'indice del dispositivo e acquisire un fotogramma di calibrazione; l'elaborazione continua live resta da validare quando sarà disponibile l'hardware.
+La dashboard prevede due sorgenti di input: video registrato e videocamera USB. La modalità videocamera permette di selezionare l'indice del dispositivo e acquisire un fotogramma di calibrazione; l'elaborazione continua live resta da validare quando sarà disponibile l'hardware. Il modulo `video_source.py` supporta inoltre sorgenti stream a livello di astrazione software.
 
 
 ## Simulatore OpenCV delle botole
 
-La dashboard di produzione è stata resa compatta per un pannello da circa 15 pollici. Il flusso video resta centrale, mentre input/calibrazione e contatori sono disposti lateralmente per limitare lo scroll operativo.
+La dashboard di produzione è stata resa compatta per un pannello da circa 15 pollici. Il flusso video resta centrale; input, ROI, deadline e parametri di nastro/botole sono raccolti nella colonna sinistra, mentre sessione, contatori ed esportazione sono disposti nella colonna destra per limitare lo scroll operativo.
 
-Il prototipo usa OpenCV anche per simulare visivamente il banco di scarto. La configurazione iniziale è un nastro da 40 cm diviso in 20 botole nominali da 2 cm. Quando un track viene finalizzato come difettoso, la bounding box viene mappata sulle zone trasversali interessate e il riquadro video evidenzia in rosso le botole candidate all'apertura. Questa visualizzazione è una simulazione software: la selezione delle botole è reale rispetto alle coordinate calcolate, mentre il momento fisico di apertura sarà affidato all'encoder quando l'hardware sarà disponibile.
+Il prototipo usa OpenCV anche per simulare visivamente il banco di scarto. La configurazione iniziale è un nastro da 40 cm diviso in 20 botole nominali da 2 cm. Quando un track viene finalizzato come difettoso, la bounding box viene mappata sulle zone trasversali interessate e il pannello laterale delle botole evidenzia in rosso quelle candidate all'apertura. Questa visualizzazione è una simulazione software: la selezione delle botole deriva dalle coordinate calcolate, mentre il momento fisico di apertura sarà sincronizzato dall'encoder quando l'hardware sarà disponibile.
