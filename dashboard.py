@@ -31,8 +31,6 @@ st.set_page_config(
 
 
 def init_state() -> None:
-    if "active_session_id" not in st.session_state:
-        st.session_state.active_session_id = None
     if "profile_key" not in st.session_state:
         st.session_state.profile_key = DEFAULT_PROFILE_KEY
     profile = PROFILES[st.session_state.profile_key]
@@ -285,8 +283,6 @@ if "analysis_summary" not in st.session_state:
     st.session_state.analysis_summary = None
 if "last_video_signature" not in st.session_state:
     st.session_state.last_video_signature = None
-if "last_live_frame" not in st.session_state:
-    st.session_state.last_live_frame = None
 if "trapdoor_count" not in st.session_state:
     st.session_state.trapdoor_count = DEFAULT_TRAPDOOR_COUNT
 if "belt_width_cm" not in st.session_state:
@@ -295,10 +291,6 @@ if "machine_events_bytes" not in st.session_state:
     st.session_state.machine_events_bytes = None
 if "machine_events_filename" not in st.session_state:
     st.session_state.machine_events_filename = None
-if "poco_audit_bytes" not in st.session_state:
-    st.session_state.poco_audit_bytes = None
-if "poco_audit_filename" not in st.session_state:
-    st.session_state.poco_audit_filename = None
 if "camera_preview_frame" not in st.session_state:
     st.session_state.camera_preview_frame = None
 
@@ -452,11 +444,8 @@ with input_col:
             st.session_state.last_video_signature = current_signature
             st.session_state.display_mode = "calibration"
             st.session_state.analysis_summary = None
-            st.session_state.last_live_frame = None
             st.session_state.machine_events_bytes = None
             st.session_state.machine_events_filename = None
-            st.session_state.poco_audit_bytes = None
-            st.session_state.poco_audit_filename = None
 
         try:
             input_path = prepare_uploaded_video(uploaded)
@@ -495,6 +484,33 @@ with input_col:
             load_profile(st.session_state.profile_key)
             st.session_state.display_mode = "calibration"
             st.rerun()
+
+    belt_a, belt_b = st.columns(2)
+    with belt_a:
+        st.number_input(
+            "Botole",
+            min_value=2,
+            max_value=40,
+            step=1,
+            key="trapdoor_count",
+        )
+    with belt_b:
+        st.number_input(
+            "Nastro cm",
+            min_value=10.0,
+            max_value=120.0,
+            step=1.0,
+            key="belt_width_cm",
+        )
+    gate_width_cm = (
+        st.session_state.belt_width_cm
+        / max(1, st.session_state.trapdoor_count)
+    )
+    st.caption(
+        f"{st.session_state.trapdoor_count} botole · "
+        f"{st.session_state.belt_width_cm:.0f} cm · "
+        f"{gate_width_cm:.1f} cm/botola"
+    )
 
 with vision_col:
     st.markdown("#### Visione linea")
@@ -650,34 +666,6 @@ with right_col:
     else:
         status_box.caption("Pronto per la sessione.")
 
-    st.markdown("#### Area nastro")
-    belt_a, belt_b = st.columns(2)
-    with belt_a:
-        st.number_input(
-            "Botole",
-            min_value=2,
-            max_value=40,
-            step=1,
-            key="trapdoor_count",
-        )
-    with belt_b:
-        st.number_input(
-            "Nastro cm",
-            min_value=10.0,
-            max_value=120.0,
-            step=1.0,
-            key="belt_width_cm",
-        )
-    gate_width_cm = (
-        st.session_state.belt_width_cm
-        / max(1, st.session_state.trapdoor_count)
-    )
-    st.caption(
-        f"{st.session_state.trapdoor_count} botole · "
-        f"{st.session_state.belt_width_cm:.0f} cm · "
-        f"{gate_width_cm:.1f} cm/botola"
-    )
-
     cumulative_rows_ui = build_lot_report_rows()
     if cumulative_rows_ui:
         lot_codes_ui = list(dict.fromkeys(row["lot_code"] for row in cumulative_rows_ui))
@@ -756,17 +744,6 @@ with right_col:
             use_container_width=True,
         )
 
-        if (
-            st.session_state.poco_audit_bytes
-            and st.session_state.poco_audit_filename
-        ):
-            st.download_button(
-                "Audit POCO",
-                data=st.session_state.poco_audit_bytes,
-                file_name=st.session_state.poco_audit_filename,
-                mime="text/csv",
-                use_container_width=True,
-            )
 
 
 
@@ -787,7 +764,7 @@ if start_clicked:
             st.session_state.display_mode = "running"
             st.session_state.analysis_summary = None
 
-            progress = progress_area.progress(0, text="Analisi AI avviata")
+            progress = progress_area.progress(0, text="Analisi avviata")
 
             def update_progress(current_frame: int, total_frames: int) -> None:
                 if total_frames > 0:
@@ -901,56 +878,6 @@ if start_clicked:
                     f"{run_input.stem}_finali_test.csv"
                 )
 
-                # Audit POCO: conserva tutte le osservazioni YOLO poco per track
-                # e le confronta con il responso finale. Serve a distinguere
-                # oscillazione di classe da problemi di tracking/colore.
-                poco_track_stats: dict[int, dict[str, float]] = {}
-                if Path(detections_path).exists():
-                    with Path(detections_path).open(
-                        "r",
-                        encoding="utf-8-sig",
-                        newline="",
-                    ) as detection_file:
-                        for row in csv.DictReader(detection_file):
-                            if (row.get("classe") or "").strip() != "poco":
-                                continue
-                            raw_track = (row.get("track_id") or "").strip()
-                            if not raw_track:
-                                continue
-                            track_id = int(float(raw_track))
-                            try:
-                                v_value = float(row.get("v_median") or 0.0)
-                                s_value = float(row.get("s_median") or 0.0)
-                                lab_l_value = float(row.get("lab_l_median") or 0.0)
-                                confidence_value = float(row.get("confidence") or 0.0)
-                                frame_value = int(float(row.get("frame") or 0))
-                            except ValueError:
-                                continue
-
-                            stats = poco_track_stats.setdefault(
-                                track_id,
-                                {
-                                    "count": 0.0,
-                                    "confidence_sum": 0.0,
-                                    "max_lab_l": 0.0,
-                                    "strong_count": 0.0,
-                                    "first_frame": 0.0,
-                                    "last_frame": 0.0,
-                                },
-                            )
-                            stats["count"] += 1.0
-                            stats["confidence_sum"] += confidence_value
-                            stats["max_lab_l"] = max(stats["max_lab_l"], lab_l_value)
-                            if (
-                                v_value >= 212.0
-                                and lab_l_value >= 208.0
-                                and s_value <= 105.0
-                            ):
-                                stats["strong_count"] += 1.0
-                            if stats["first_frame"] == 0.0:
-                                stats["first_frame"] = float(frame_value)
-                            stats["last_frame"] = float(frame_value)
-
                 final_by_track: dict[int, dict[str, str]] = {}
                 if finali_path.exists():
                     with finali_path.open(
@@ -962,69 +889,6 @@ if start_clicked:
                             raw_track = (row.get("track_id") or "").strip()
                             if raw_track:
                                 final_by_track[int(float(raw_track))] = row
-
-                poco_audit_rows = []
-                poco_candidates_lost = []
-                for track_id, stats in sorted(poco_track_stats.items()):
-                    final_row = final_by_track.get(track_id, {})
-                    final_label = (final_row.get("responso_finale") or "").strip()
-                    audit_row = {
-                        "track_id": track_id,
-                        "osservazioni_poco": int(stats["count"]),
-                        "osservazioni_poco_forti": int(stats["strong_count"]),
-                        "conf_media_poco": round(
-                            stats["confidence_sum"] / stats["count"],
-                            4,
-                        ) if stats["count"] else 0.0,
-                        "max_lab_l_poco": round(stats["max_lab_l"], 2),
-                        "frame_prima_poco": int(stats["first_frame"]),
-                        "frame_ultima_poco": int(stats["last_frame"]),
-                        "responso_finale": final_label or "nessuno",
-                        "supporto_colore_finale": (
-                            final_row.get("supporto_colore") or ""
-                        ).strip(),
-                        "lab_l_finale": (
-                            final_row.get("track_lab_l_median") or ""
-                        ).strip(),
-                    }
-                    poco_audit_rows.append(audit_row)
-
-                    if (
-                        int(stats["count"]) >= 2
-                        and int(stats["strong_count"]) >= 1
-                        and final_label != "poco"
-                    ):
-                        poco_candidates_lost.append(audit_row)
-
-                audit_output = io.StringIO()
-                audit_fields = [
-                    "track_id",
-                    "osservazioni_poco",
-                    "osservazioni_poco_forti",
-                    "conf_media_poco",
-                    "max_lab_l_poco",
-                    "frame_prima_poco",
-                    "frame_ultima_poco",
-                    "responso_finale",
-                    "supporto_colore_finale",
-                    "lab_l_finale",
-                ]
-                audit_writer = csv.DictWriter(
-                    audit_output,
-                    fieldnames=audit_fields,
-                    delimiter=";",
-                    lineterminator="\n",
-                )
-                audit_writer.writeheader()
-                audit_writer.writerows(poco_audit_rows)
-                st.session_state.poco_audit_bytes = (
-                    audit_output.getvalue().encode("utf-8-sig")
-                )
-                st.session_state.poco_audit_filename = (
-                    f"audit_poco_{safe_name(lot_code)}_"
-                    f"{safe_name(product_description)}.csv"
-                )
-                st.session_state.poco_diagnostic = poco_candidates_lost
 
                 total_analyzed = len(final_by_track)
 
@@ -1093,17 +957,9 @@ if start_clicked:
                 )
 
                 st.session_state.last_closed_session_id = session_id
-                poco_diag_count = len(
-                    st.session_state.get("poco_diagnostic", [])
-                )
-                diagnostic_suffix = (
-                    f" · {poco_diag_count} track POCO forte non confermata"
-                    if poco_diag_count
-                    else ""
-                )
                 st.session_state.analysis_summary = (
-                    f"Sessione #{session_id} · {total_analyzed} analizzati · {imported} scarti"
-                    f"{diagnostic_suffix}"
+                    f"Sessione #{session_id} · {total_analyzed} analizzati · "
+                    f"{imported} scarti"
                 )
                 st.session_state.display_mode = "processed"
                 progress.progress(1.0, text="Analisi completata")
@@ -1119,8 +975,8 @@ st.markdown(
     <div class="machine-note">
     <b>Simulatore OpenCV:</b> nastro {st.session_state.belt_width_cm:.0f} cm ·
     {st.session_state.trapdoor_count} botole ·
-    {gate_width_cm:.1f} cm/botola. Le botole evidenziate nel video rappresentano
-    il comando candidato; il timing encoder resta simulato fino al collegamento hardware.
+    {gate_width_cm:.1f} cm/botola. Le botole evidenziate nel pannello rappresentano
+    il comando candidato; il timing fisico sarà sincronizzato dall'encoder.
     </div>
     """,
     unsafe_allow_html=True,
