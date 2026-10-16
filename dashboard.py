@@ -120,6 +120,67 @@ def draw_acquisition_overlay(
     return cv2.cvtColor(output, cv2.COLOR_BGR2RGB)
 
 
+def build_trapdoor_panel(
+    trapdoor_count: int,
+    active_gates: list[int] | None = None,
+    label: str | None = None,
+    track_id: int | None = None,
+):
+    gates = max(1, int(trapdoor_count))
+    active = set(active_gates or [])
+    panel_h = 420
+    panel_w = 86
+    canvas = 255 * __import__("numpy").ones((panel_h, panel_w, 3), dtype="uint8")
+
+    cv2.putText(
+        canvas,
+        "BOT.",
+        (8, 18),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.42,
+        (25, 25, 25),
+        1,
+        cv2.LINE_AA,
+    )
+
+    top = 28
+    bottom = panel_h - 12
+    usable = max(1, bottom - top)
+    cell_h = usable / gates
+
+    for gate in range(1, gates + 1):
+        y1 = int(top + (gate - 1) * cell_h)
+        y2 = int(top + gate * cell_h) - 1
+        fill = (40, 40, 220) if gate in active else (225, 225, 225)
+        border = (20, 20, 20) if gate in active else (150, 150, 150)
+        cv2.rectangle(canvas, (8, y1), (panel_w - 8, y2), fill, -1)
+        cv2.rectangle(canvas, (8, y1), (panel_w - 8, y2), border, 1)
+        cv2.putText(
+            canvas,
+            str(gate),
+            (15, min(y2 - 2, y1 + 10)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.28,
+            (255, 255, 255) if gate in active else (70, 70, 70),
+            1,
+            cv2.LINE_AA,
+        )
+
+    if active and track_id is not None:
+        cv2.putText(
+            canvas,
+            f"ID {track_id}",
+            (8, panel_h - 2),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.28,
+            (25, 25, 25),
+            1,
+            cv2.LINE_AA,
+        )
+
+    return cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
+
+
 def crop_to_roi(frame, left: int, right: int, top: int, bottom: int):
     height, width = frame.shape[:2]
     x1 = int(width * left / 100)
@@ -395,9 +456,18 @@ with center_col:
         h, w = camera_frame.shape[:2]
         frame_data = (camera_frame, w, h, 0.0)
 
-    video_frame = st.empty()
-    video_caption = st.empty()
-    progress_area = st.empty()
+    trapdoor_col, video_col = st.columns([0.18, 0.82], gap="small")
+    with trapdoor_col:
+        trapdoor_frame = st.empty()
+        trapdoor_frame.image(
+            build_trapdoor_panel(st.session_state.trapdoor_count),
+            channels="RGB",
+            width=72,
+        )
+    with video_col:
+        video_frame = st.empty()
+        video_caption = st.empty()
+        progress_area = st.empty()
 
     if frame_data is None:
         if source_mode == "Videocamera USB":
@@ -423,7 +493,7 @@ with center_col:
             st.session_state.roi_top,
             st.session_state.roi_bottom,
         )
-        video_frame.image(cropped_overlay, channels="RGB", width=330)
+        video_frame.image(cropped_overlay, channels="RGB", width=280)
         crop_h, crop_w = cropped_overlay.shape[:2]
         video_caption.caption(
             f"CALIBRAZIONE ROI · {crop_w}×{crop_h} · "
@@ -504,6 +574,22 @@ if start_clicked:
                         text=f"YOLO + OpenCV · frame {current_frame}/{total_frames}",
                     )
 
+            def update_gate_panel(
+                active_gates: list[int],
+                active_label: str | None,
+                active_track_id: int | None,
+            ) -> None:
+                trapdoor_frame.image(
+                    build_trapdoor_panel(
+                        st.session_state.trapdoor_count,
+                        active_gates=active_gates,
+                        label=active_label,
+                        track_id=active_track_id,
+                    ),
+                    channels="RGB",
+                    width=72,
+                )
+
             def update_live_frame(current_frame: int, total_frames: int, frame) -> None:
                 cropped = crop_to_roi(
                     frame,
@@ -513,7 +599,7 @@ if start_clicked:
                     st.session_state.roi_bottom,
                 )
                 height, width = cropped.shape[:2]
-                target_width = 330
+                target_width = 280
                 if width > target_width:
                     scale = target_width / width
                     preview = cv2.resize(
@@ -554,6 +640,7 @@ if start_clicked:
                     annotated_output_path=None,
                     progress_callback=update_progress,
                     frame_callback=update_live_frame,
+                    gate_callback=update_gate_panel,
                     model_instance=model,
                     trapdoor_count=st.session_state.trapdoor_count,
                 )
