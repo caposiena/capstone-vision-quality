@@ -859,15 +859,27 @@ if start_clicked:
                             if not raw_track:
                                 continue
                             track_id = int(float(raw_track))
+                            try:
+                                v_value = float(row.get("v_median") or 0.0)
+                                s_value = float(row.get("s_median") or 0.0)
+                                lab_l_value = float(row.get("lab_l_median") or 0.0)
+                                confidence_value = float(row.get("confidence") or 0.0)
+                            except ValueError:
+                                continue
+
+                            if not (
+                                v_value >= 212.0
+                                and lab_l_value >= 208.0
+                                and s_value <= 105.0
+                            ):
+                                continue
+
                             stats = poco_track_stats.setdefault(
                                 track_id,
                                 {"count": 0.0, "confidence_sum": 0.0},
                             )
                             stats["count"] += 1.0
-                            try:
-                                stats["confidence_sum"] += float(row.get("confidence") or 0.0)
-                            except ValueError:
-                                pass
+                            stats["confidence_sum"] += confidence_value
 
                 final_by_track: dict[int, dict[str, str]] = {}
                 if finali_path.exists():
@@ -1002,7 +1014,7 @@ if start_clicked:
                     st.session_state.get("poco_diagnostic", [])
                 )
                 diagnostic_suffix = (
-                    f" · {poco_diag_count} track con evidenza POCO non confermata"
+                    f" · {poco_diag_count} track POCO forte non confermata"
                     if poco_diag_count
                     else ""
                 )
