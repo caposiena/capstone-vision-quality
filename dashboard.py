@@ -287,6 +287,8 @@ st.markdown(
     div[data-testid="stSlider"] {
         padding-top: 0;
         padding-bottom: 0;
+        margin-top: -0.15rem;
+        margin-bottom: -0.25rem;
     }
     .visiontar-header {
         font-size: 1.55rem;
@@ -344,7 +346,7 @@ if invalid_roi:
 
 profile = PROFILES[st.session_state.profile_key]
 
-input_col, vision_col, right_col = st.columns([0.17, 0.53, 0.30], gap="small")
+input_col, vision_col, right_col = st.columns([0.18, 0.50, 0.32], gap="small")
 
 with input_col:
     st.markdown("#### Input")
@@ -415,6 +417,17 @@ with input_col:
     if selected_key != st.session_state.profile_key:
         st.session_state.profile_key = selected_key
         profile = PROFILES[selected_key]
+
+    st.markdown("#### Area visiva")
+    st.slider("SX", 0, 45, key="roi_left")
+    st.slider("DX", 0, 45, key="roi_right")
+    st.slider("ALTO", 0, 45, key="roi_top")
+    st.slider("BASSO", 0, 45, key="roi_bottom")
+    st.slider("DEADLINE", 0, 100, key="deadline_x")
+    if st.button("Preset", use_container_width=True):
+        load_profile(st.session_state.profile_key)
+        st.session_state.display_mode = "calibration"
+        st.rerun()
 
 with vision_col:
     st.markdown("#### Visione linea")
@@ -570,6 +583,34 @@ with right_col:
     else:
         status_box.caption("Pronto per la sessione.")
 
+    st.markdown("#### Area nastro")
+    belt_a, belt_b = st.columns(2)
+    with belt_a:
+        st.number_input(
+            "Botole",
+            min_value=2,
+            max_value=40,
+            step=1,
+            key="trapdoor_count",
+        )
+    with belt_b:
+        st.number_input(
+            "Nastro cm",
+            min_value=10.0,
+            max_value=120.0,
+            step=1.0,
+            key="belt_width_cm",
+        )
+    gate_width_cm = (
+        st.session_state.belt_width_cm
+        / max(1, st.session_state.trapdoor_count)
+    )
+    st.caption(
+        f"{st.session_state.trapdoor_count} botole · "
+        f"{st.session_state.belt_width_cm:.0f} cm · "
+        f"{gate_width_cm:.1f} cm/botola"
+    )
+
     cumulative_rows_ui = build_lot_report_rows()
     if cumulative_rows_ui:
         lot_codes_ui = list(dict.fromkeys(row["lot_code"] for row in cumulative_rows_ui))
@@ -682,63 +723,6 @@ with right_col:
             use_container_width=True,
         )
 
-settings_pad, settings_col, settings_rest = st.columns([0.05, 0.58, 0.37], gap="small")
-with settings_col:
-    st.markdown("#### Area nastro")
-
-    group_left, group_right = st.columns(2, gap="medium")
-
-    with group_left:
-        pair1a, pair1b = st.columns(2)
-        with pair1a:
-            st.number_input(
-                "Botole",
-                min_value=2,
-                max_value=40,
-                step=1,
-                key="trapdoor_count",
-            )
-        with pair1b:
-            st.number_input(
-                "Nastro cm",
-                min_value=10.0,
-                max_value=120.0,
-                step=1.0,
-                key="belt_width_cm",
-            )
-
-        pair2a, pair2b = st.columns(2)
-        with pair2a:
-            st.slider("SX", 0, 45, key="roi_left")
-        with pair2b:
-            st.slider("DX", 0, 45, key="roi_right")
-
-    with group_right:
-        pair3a, pair3b = st.columns(2)
-        with pair3a:
-            st.slider("ALTO", 0, 45, key="roi_top")
-        with pair3b:
-            st.slider("BASSO", 0, 45, key="roi_bottom")
-
-        pair4a, pair4b = st.columns(2)
-        with pair4a:
-            st.slider("DEADLINE", 0, 100, key="deadline_x")
-        with pair4b:
-            st.write("")
-            if st.button("Preset", use_container_width=True):
-                load_profile(st.session_state.profile_key)
-                st.session_state.display_mode = "calibration"
-                st.rerun()
-
-    gate_width_cm = (
-        st.session_state.belt_width_cm
-        / max(1, st.session_state.trapdoor_count)
-    )
-    st.caption(
-        f"{st.session_state.trapdoor_count} botole · "
-        f"{st.session_state.belt_width_cm:.0f} cm nastro · "
-        f"{gate_width_cm:.1f} cm/botola"
-    )
 
 
 if start_clicked:
