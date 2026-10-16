@@ -346,7 +346,7 @@ if invalid_roi:
 
 profile = PROFILES[st.session_state.profile_key]
 
-input_col, vision_col, right_col = st.columns([0.18, 0.50, 0.32], gap="small")
+input_col, vision_col, right_col = st.columns([0.21, 0.47, 0.32], gap="small")
 
 with input_col:
     st.markdown("#### Input")
@@ -418,16 +418,27 @@ with input_col:
         st.session_state.profile_key = selected_key
         profile = PROFILES[selected_key]
 
-    st.markdown("#### Area visiva")
-    st.slider("SX", 0, 45, key="roi_left")
-    st.slider("DX", 0, 45, key="roi_right")
-    st.slider("ALTO", 0, 45, key="roi_top")
-    st.slider("BASSO", 0, 45, key="roi_bottom")
-    st.slider("DEADLINE", 0, 100, key="deadline_x")
-    if st.button("Preset", use_container_width=True):
-        load_profile(st.session_state.profile_key)
-        st.session_state.display_mode = "calibration"
-        st.rerun()
+    pair1a, pair1b = st.columns(2)
+    with pair1a:
+        st.slider("SX", 0, 45, key="roi_left")
+    with pair1b:
+        st.slider("ALTO", 0, 45, key="roi_top")
+
+    pair2a, pair2b = st.columns(2)
+    with pair2a:
+        st.slider("DX", 0, 45, key="roi_right")
+    with pair2b:
+        st.slider("BASSO", 0, 45, key="roi_bottom")
+
+    pair3a, pair3b = st.columns(2)
+    with pair3a:
+        st.slider("DEADLINE", 0, 100, key="deadline_x")
+    with pair3b:
+        st.write("")
+        if st.button("Preset", use_container_width=True):
+            load_profile(st.session_state.profile_key)
+            st.session_state.display_mode = "calibration"
+            st.rerun()
 
 with vision_col:
     st.markdown("#### Visione linea")
