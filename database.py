@@ -245,6 +245,7 @@ def build_lot_report_rows(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
                 FROM production_sessions s
                 LEFT JOIN defect_events d ON d.session_id = s.id
                 WHERE s.ended_at IS NOT NULL
+                  AND COALESCE(s.total_analyzed, 0) > 0
                 GROUP BY
                     s.id,
                     s.production_date,
