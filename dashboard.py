@@ -308,7 +308,7 @@ with meta2:
 with meta3:
     lot_code = st.text_input("Lotto", placeholder="L251016A")
 
-left_col, center_col, right_col = st.columns([0.30, 0.40, 0.30], gap="medium")
+left_col, center_col, right_col = st.columns([0.23, 0.47, 0.30], gap="small")
 
 with left_col:
     st.markdown("#### Input")
@@ -546,12 +546,25 @@ with right_col:
         }
 
     m1, m2 = st.columns(2)
-    m1.metric("Totale", summary["totale_scarti"])
-    m2.metric("Rotto", summary["rotto"])
+    with m1:
+        total_metric = st.empty()
+    with m2:
+        rotto_metric = st.empty()
     m3, m4 = st.columns(2)
-    m3.metric("Cotto", summary["cotto"])
-    m4.metric("Poco", summary["poco"])
-    st.metric("Blob", summary["blob"])
+    with m3:
+        cotto_metric = st.empty()
+    with m4:
+        poco_metric = st.empty()
+    blob_metric = st.empty()
+
+    def render_counters(values: dict[str, int]) -> None:
+        total_metric.metric("Totale", values["totale_scarti"])
+        rotto_metric.metric("Rotto", values["rotto"])
+        cotto_metric.metric("Cotto", values["cotto"])
+        poco_metric.metric("Poco", values["poco"])
+        blob_metric.metric("Blob", values["blob"])
+
+    render_counters(summary)
 
     status_box = st.empty()
     if st.session_state.analysis_summary:
@@ -584,6 +597,21 @@ if start_clicked:
                         min(1.0, current_frame / total_frames),
                         text=f"YOLO + OpenCV · frame {current_frame}/{total_frames}",
                     )
+
+            live_counts = {
+                "totale_scarti": 0,
+                "cotto": 0,
+                "poco": 0,
+                "blob": 0,
+                "rotto": 0,
+            }
+            render_counters(live_counts)
+
+            def update_live_counter(defect_class: str, _track_id: int) -> None:
+                if defect_class in {"cotto", "poco", "blob", "rotto"}:
+                    live_counts[defect_class] += 1
+                    live_counts["totale_scarti"] += 1
+                    render_counters(live_counts)
 
             def update_gate_panel(
                 active_gates: list[int],
@@ -657,6 +685,7 @@ if start_clicked:
                     progress_callback=update_progress,
                     frame_callback=update_live_frame,
                     gate_callback=update_gate_panel,
+                    defect_callback=update_live_counter,
                     model_instance=model,
                     trapdoor_count=st.session_state.trapdoor_count,
                 )
@@ -780,6 +809,48 @@ st.markdown(
 summary_session_id = st.session_state.get("last_closed_session_id")
 if summary_session_id is not None:
     cumulative_rows = build_session_report_rows()
+    lot_codes = list(dict.fromkeys(row["lot_code"] for row in cumulative_rows))
+
+    st.markdown("#### Esportazione")
+    export_mode = st.selectbox(
+        "Esporta",
+        ["Seleziona lotto", "Lotto da - a", "Esporta tutti"],
+        label_visibility="collapsed",
+    )
+
+    filtered_rows = cumulative_rows
+    export_suffix = "tutti"
+
+    if export_mode == "Seleziona lotto" and lot_codes:
+        selected_lot = st.selectbox("Lotto", lot_codes)
+        filtered_rows = [
+            row for row in cumulative_rows
+            if row["lot_code"] == selected_lot
+        ]
+        export_suffix = safe_name(selected_lot)
+
+    elif export_mode == "Lotto da - a" and lot_codes:
+        range_col1, range_col2 = st.columns(2)
+        with range_col1:
+            lot_from = st.selectbox("Lotto da", lot_codes, index=0)
+        with range_col2:
+            lot_to = st.selectbox("Lotto a", lot_codes, index=len(lot_codes) - 1)
+
+        start_index = lot_codes.index(lot_from)
+        end_index = lot_codes.index(lot_to)
+        if start_index > end_index:
+            start_index, end_index = end_index, start_index
+
+        selected_range = set(lot_codes[start_index:end_index + 1])
+        filtered_rows = [
+            row for row in cumulative_rows
+            if row["lot_code"] in selected_range
+        ]
+        export_suffix = (
+            f"{safe_name(lot_codes[start_index])}_"
+            f"{safe_name(lot_codes[end_index])}"
+        )
+
     export_rows = [
         {
             "Rilevazione": row["rilevazione_id"],
@@ -794,9 +865,10 @@ if summary_session_id is not None:
             "Blob": row["blob"],
             "Rotto": row["rotto"],
         }
-        for row in cumulative_rows
+        for row in filtered_rows
     ]
-    cumulative_fields = [
+
+    export_fields = [
         "Rilevazione",
         "Data produzione",
         "Prodotto",
@@ -813,27 +885,19 @@ if summary_session_id is not None:
     output = io.StringIO()
     writer = csv.DictWriter(
         output,
-        fieldnames=cumulative_fields,
+        fieldnames=export_fields,
         delimiter=";",
         lineterminator="\n",
     )
     writer.writeheader()
     writer.writerows(export_rows)
 
-    st.markdown("#### Registro produzioni")
-    st.dataframe(
-        export_rows,
-        use_container_width=True,
-        hide_index=True,
-        height=180,
-    )
-
-    dl1, dl2, dl3 = st.columns([0.38, 0.38, 0.24])
-    with dl1:
+    export_col1, export_col2, export_col3 = st.columns([0.38, 0.38, 0.24])
+    with export_col1:
         st.download_button(
-            "Scarica report_lotti.csv",
+            "Esporta CSV",
             data=output.getvalue().encode("utf-8-sig"),
-            file_name="report_lotti.csv",
+            file_name=f"report_lotti_{export_suffix}.csv",
             mime="text/csv",
             use_container_width=True,
         )
@@ -842,7 +906,7 @@ if summary_session_id is not None:
         st.session_state.machine_events_bytes
         and st.session_state.machine_events_filename
     ):
-        with dl2:
+        with export_col2:
             st.download_button(
                 "Eventi macchina",
                 data=st.session_state.machine_events_bytes,
