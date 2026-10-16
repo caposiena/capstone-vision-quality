@@ -252,12 +252,12 @@ st.markdown(
     """
     <style>
     .block-container {
-        padding-top: 0.45rem;
-        padding-bottom: 0.45rem;
-        max-width: 1360px;
+        padding-top: 0.25rem;
+        padding-bottom: 0.25rem;
+        max-width: 1480px;
     }
     h1, h2, h3, h4 { margin-top: 0.15rem !important; margin-bottom: 0.25rem !important; }
-    div[data-testid="stVerticalBlock"] { gap: 0.45rem; }
+    div[data-testid="stVerticalBlock"] { gap: 0.30rem; }
     div[data-testid="stMetric"] {
         border: 1px solid rgba(128,128,128,.22);
         border-radius: 10px;
@@ -330,9 +330,71 @@ with meta2:
 with meta3:
     lot_code = st.text_input("Lotto", placeholder="L251016A")
 
-setup_left, setup_right = st.columns([0.18, 0.82], gap="small")
+st.markdown("#### Area nastro")
+belt1, belt2, belt3, belt4, belt5, belt6, belt7, belt8 = st.columns(
+    [0.09, 0.11, 0.13, 0.13, 0.13, 0.13, 0.15, 0.13],
+    gap="small",
+)
 
-with setup_left:
+with belt1:
+    st.number_input(
+        "Botole",
+        min_value=2,
+        max_value=40,
+        step=1,
+        key="trapdoor_count",
+    )
+with belt2:
+    st.number_input(
+        "Nastro cm",
+        min_value=10.0,
+        max_value=120.0,
+        step=1.0,
+        key="belt_width_cm",
+    )
+with belt3:
+    st.slider("Margine SX", 0, 45, key="roi_left")
+with belt4:
+    st.slider("Margine DX", 0, 45, key="roi_right")
+with belt5:
+    st.slider("Margine ALTO", 0, 45, key="roi_top")
+with belt6:
+    st.slider("Margine BASSO", 0, 45, key="roi_bottom")
+with belt7:
+    st.slider("DEADLINE", 0, 100, key="deadline_x")
+with belt8:
+    st.write("")
+    if st.button("Preset", use_container_width=True):
+        profile_key_for_preset = st.session_state.get(
+            "profile_key",
+            DEFAULT_PROFILE_KEY,
+        )
+        load_profile(profile_key_for_preset)
+        st.session_state.display_mode = "calibration"
+        st.rerun()
+
+gate_width_cm = (
+    st.session_state.belt_width_cm
+    / max(1, st.session_state.trapdoor_count)
+)
+st.caption(
+    f"{st.session_state.trapdoor_count} botole · "
+    f"{st.session_state.belt_width_cm:.0f} cm nastro · "
+    f"{gate_width_cm:.1f} cm nominali per botola"
+)
+
+invalid_roi = (
+    st.session_state.roi_left + st.session_state.roi_right >= 90
+    or st.session_state.roi_top + st.session_state.roi_bottom >= 90
+)
+if invalid_roi:
+    st.error("Area nastro non valida: riduci i margini.")
+
+profile = PROFILES[st.session_state.profile_key]
+
+input_col, vision_col, right_col = st.columns([0.20, 0.50, 0.30], gap="small")
+
+with input_col:
     st.markdown("#### Input")
 
     source_mode = st.selectbox(
@@ -353,31 +415,28 @@ with setup_left:
             label_visibility="collapsed",
         )
     else:
-        cam1, cam2 = st.columns([0.42, 0.58])
-        with cam1:
-            camera_index = int(
-                st.number_input(
-                    "Camera",
-                    min_value=0,
-                    max_value=10,
-                    value=0,
-                    step=1,
-                )
+        camera_index = int(
+            st.number_input(
+                "Camera",
+                min_value=0,
+                max_value=10,
+                value=0,
+                step=1,
             )
-        with cam2:
-            if st.button("Leggi camera", use_container_width=True):
+        )
+        if st.button("Leggi camera", use_container_width=True):
+            try:
+                camera = open_usb_camera(camera_index)
                 try:
-                    camera = open_usb_camera(camera_index)
-                    try:
-                        ok, camera_frame = camera.read()
-                        if not ok:
-                            raise RuntimeError("Nessun fotogramma ricevuto.")
-                        st.session_state.camera_preview_frame = camera_frame
-                        st.session_state.display_mode = "calibration"
-                    finally:
-                        camera.release()
-                except Exception as exc:
-                    st.error(f"Camera non disponibile: {exc}")
+                    ok, camera_frame = camera.read()
+                    if not ok:
+                        raise RuntimeError("Nessun fotogramma ricevuto.")
+                    st.session_state.camera_preview_frame = camera_frame
+                    st.session_state.display_mode = "calibration"
+                finally:
+                    camera.release()
+            except Exception as exc:
+                st.error(f"Camera non disponibile: {exc}")
 
     if uploaded is not None:
         current_signature = f"{uploaded.name}:{uploaded.size}"
@@ -401,70 +460,11 @@ with setup_left:
         format_func=lambda key: profile_labels[key],
         index=list(PROFILES.keys()).index(st.session_state.profile_key),
     )
+    if selected_key != st.session_state.profile_key:
+        st.session_state.profile_key = selected_key
+        profile = PROFILES[selected_key]
 
-with setup_right:
-    st.markdown("#### Area nastro")
-
-    set1, set2, set3, set4, set5, set6, set7, set8 = st.columns(
-        [0.09, 0.11, 0.13, 0.13, 0.13, 0.13, 0.15, 0.13],
-        gap="small",
-    )
-
-    with set1:
-        st.number_input(
-            "Botole",
-            min_value=2,
-            max_value=40,
-            step=1,
-            key="trapdoor_count",
-        )
-    with set2:
-        st.number_input(
-            "Nastro cm",
-            min_value=10.0,
-            max_value=120.0,
-            step=1.0,
-            key="belt_width_cm",
-        )
-    with set3:
-        st.slider("Margine SX", 0, 45, key="roi_left")
-    with set4:
-        st.slider("Margine DX", 0, 45, key="roi_right")
-    with set5:
-        st.slider("Margine ALTO", 0, 45, key="roi_top")
-    with set6:
-        st.slider("Margine BASSO", 0, 45, key="roi_bottom")
-    with set7:
-        st.slider("DEADLINE", 0, 100, key="deadline_x")
-    with set8:
-        st.write("")
-        if st.button("Preset", use_container_width=True):
-            load_profile(selected_key)
-            st.session_state.display_mode = "calibration"
-            st.rerun()
-
-    gate_width_cm = (
-        st.session_state.belt_width_cm
-        / max(1, st.session_state.trapdoor_count)
-    )
-    st.caption(
-        f"{st.session_state.trapdoor_count} botole · "
-        f"{st.session_state.belt_width_cm:.0f} cm nastro · "
-        f"{gate_width_cm:.1f} cm nominali per botola"
-    )
-
-invalid_roi = (
-    st.session_state.roi_left + st.session_state.roi_right >= 90
-    or st.session_state.roi_top + st.session_state.roi_bottom >= 90
-)
-if invalid_roi:
-    st.error("Area nastro non valida: riduci i margini.")
-
-profile = PROFILES[st.session_state.profile_key]
-
-main_col, right_col = st.columns([0.70, 0.30], gap="small")
-
-with main_col:
+with vision_col:
     st.markdown("#### Visione linea")
 
     frame_data = None
@@ -481,9 +481,9 @@ with main_col:
         h, w = camera_frame.shape[:2]
         frame_data = (camera_frame, w, h, 0.0)
 
-    display_video_width = 300
-    display_gate_width = 58
-    display_video_height = 180
+    display_video_width = 360
+    display_gate_width = 64
+    display_video_height = 210
     if frame_data is not None:
         raw_roi = crop_to_roi(
             frame_data[0],
@@ -498,8 +498,8 @@ with main_col:
             int(round(display_video_width * raw_h / max(1, raw_w))),
         )
 
-    view_left, view_mid, view_space = st.columns([0.10, 0.48, 0.42], gap="small")
-    with view_left:
+    trapdoor_col, video_col = st.columns([0.16, 0.84], gap="small")
+    with trapdoor_col:
         trapdoor_frame = st.empty()
         trapdoor_frame.image(
             build_trapdoor_panel(
@@ -510,7 +510,7 @@ with main_col:
             channels="RGB",
             width=display_gate_width,
         )
-    with view_mid:
+    with video_col:
         video_frame = st.empty()
         video_caption = st.empty()
         progress_area = st.empty()
