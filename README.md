@@ -1,130 +1,87 @@
 # Sistema di visione artificiale per il controllo qualità di prodotti da forno
 
-Progetto Capstone sviluppato per il Master EPICODE.
+Capstone EPICODE dedicato al controllo visivo di taralli su nastro trasportatore.
 
-L'obiettivo è realizzare un prototipo capace di osservare un flusso di taralli su nastro trasportatore, individuare i singoli prodotti e segnalare le principali non conformità visive.
+Il prototipo riconosce i singoli pezzi, assegna una classe e registra gli scarti. Le classi utilizzate sono `buono`, `cotto`, `poco`, `blob` e `rotto`.
 
-## Stato del progetto
+La pipeline utilizza YOLO per la detection e OpenCV per acquisizione, colore, geometria e visualizzazione. Il risultato viene consolidato con un tracking leggero; il responso viene fissato al passaggio della deadline impostata nella ROI.
 
-La fase di addestramento, calibrazione e validazione della baseline V1 è conclusa.
+## Avvio
 
-Classi attuali:
+Ambiente di sviluppo: Python 3.11.
 
-- `buono`
-- `cotto`
-- `poco`
-- `blob`
-- `rotto`
+Installazione dipendenze:
 
-Il sistema combina il detector YOLO con un tracking leggero e con controlli aggiuntivi sul colore e sulla geometria. Il responso viene congelato quando il prodotto attraversa una deadline configurabile all'interno della ROI.
-
-La baseline è stata calibrata sul video 2, verificata sul video 3 e successivamente provata anche sul video 1, che presenta uno zoom e condizioni di illuminazione differenti. Dopo questi test le soglie di classificazione sono state congelate.
-
-Il percorso seguito per la calibrazione e i risultati dei test sono descritti in [docs/CALIBRAZIONE.md](docs/CALIBRAZIONE.md).
-
-La composizione del dataset e le metriche del modello sono riportate in [docs/DATASET.md](docs/DATASET.md).
-
-## Struttura del repository
-
-```text
-capstone-vision-quality/
-├── README.md
-├── requirements.txt
-├── visionTar.py
-├── dashboard.py
-├── acquisition_config.py
-├── video_source.py
-├── database.py
-├── trainTar.py
-├── testTar.py
-├── buildDatasetV2.py
-├── scripts/
-│   └── reset_test_db.ps1
-└── docs/
-    ├── CALIBRAZIONE.md
-    └── DATASET.md
+```powershell
+python -m pip install -r requirements.txt
 ```
 
-### File principali
+Avvio dashboard:
 
-`visionTar.py` è l'applicazione usata per l'analisi dei video, il tracking e la produzione dei CSV.
+```powershell
+streamlit run .\dashboard.py
+```
 
-`trainTar.py` contiene il flusso di training YOLO.
+Il modello addestrato usato dal progetto è `best.pt` prodotto dal training sul dataset V2.
 
-`testTar.py` viene usato per la valutazione del modello sul test set.
+## File principali
 
-`buildDatasetV2.py` prepara la struttura del dataset V2.
+- `visionTar.py`: analisi video, tracking, classificazione finale e generazione dei CSV
+- `dashboard.py`: interfaccia Streamlit
+- `acquisition_config.py`: profili ROI e deadline
+- `video_source.py`: gestione delle sorgenti video
+- `database.py`: sessioni, scarti e report SQLite
+- `trainTar.py`: training YOLO
+- `testTar.py`: valutazione del modello
+- `buildDatasetV2.py`: preparazione dataset
 
-`dashboard.py` contiene l'interfaccia Streamlit per selezionare la sorgente video, configurare ROI e deadline e avviare l'analisi.
+Documentazione:
+- `docs/DATASET.md`
+- `docs/CALIBRAZIONE.md`
 
-`acquisition_config.py` contiene i profili di acquisizione separati dalle soglie del classificatore.
+## Funzionamento
 
-`video_source.py` astrae la sorgente video e consente di usare file, videocamera USB o stream IP senza cambiare la pipeline.
+Flusso principale:
 
-`database.py` gestisce il database SQLite locale con sessioni di produzione e singoli eventi di scarto.
+```text
+video -> ROI -> YOLO -> tracking -> colore/geometria -> deadline
+      -> responso finale -> coordinate scarto -> database/report
+```
 
-## Pipeline
+Per ogni sessione vengono generati:
+- CSV delle detection frame per frame;
+- CSV con un record per ogni track finalizzato;
+- CSV degli scarti con coordinate, bounding box, timestamp e botole associate.
 
-Il flusso attuale è:
+La dashboard registra inoltre data, prodotto e lotto e produce il report riepilogativo `report_lotti.csv`.
 
-video → ROI → YOLO → tracking → supporto colore/geometria → deadline → responso finale → coordinate scarto → database/report
+## Validazione
 
-Durante l'esecuzione vengono prodotti tre tipi di file:
+La calibrazione è stata eseguita sul video 2. Il video 3 è stato usato come verifica indipendente; il video 1 come prova aggiuntiva con zoom e illuminazione differenti.
 
-- un CSV con le detection frame per frame;
-- un CSV finale con una sola riga per ogni track finalizzato;
-- un CSV scarti che contiene solo i pezzi difettosi e le coordinate necessarie a un futuro sistema di scarto.
+Risultati di riferimento:
 
-I video vengono usati per l'elaborazione e non fanno parte del repository.
+| Video | Cotto | Poco | Blob | Rotto |
+|---|---:|---:|---:|---:|
+| 2 - manuale | 6 | 5 | 7 | 14 |
+| 2 - sistema | 6 | 5 | 6 | 15 |
+| 3 - manuale | 2 | 3 | 1 | 8 |
+| 3 - sistema | 2 | 3 | 1 | 9 |
 
-## Risultati sintetici
+Sul video 1 il conteggio manuale disponibile per `rotto` è 14; il sistema ne rileva 17.
 
-Sul video 2, usato per la calibrazione, il sistema ha restituito:
+I dettagli della validazione sono in `docs/CALIBRAZIONE.md`.
 
-- cotto: 6, rispetto a 6 reali;
-- poco: 5, rispetto a 5 reali;
-- blob: 6, rispetto a 7 reali;
-- rotto: 15, rispetto a 14 reali.
+## Dashboard e simulazione scarto
 
-Sul video 3, usato come prima validazione indipendente:
+La dashboard consente di impostare ROI, deadline, larghezza del nastro e numero di botole. La configurazione usata nel prototipo è 40 cm con 20 botole.
 
-- cotto: 2, rispetto a 2 reali;
-- poco: 3, rispetto a 3 reali;
-- blob: 1, rispetto a 1 reale;
-- rotto: 9, rispetto a 8 reali.
+Quando un pezzo viene finalizzato come difettoso, la bounding box viene proiettata sulla larghezza utile del nastro e convertita nelle botole interessate. Il file tecnico di scarto conserva anche coordinate in pixel e normalizzate, frame e timestamp.
 
-Il video 1 ha introdotto volutamente una condizione meno favorevole, con zoom diverso e illuminazione meno uniforme. Sul difetto `rotto` il sistema ha contato 17 pezzi contro 14 del conteggio manuale. Il test è stato mantenuto perché mostra in modo utile un limite reale del prototipo e l'importanza, in una futura installazione industriale, di camera e illuminazione controllate.
+Il pannello botole rappresenta la selezione calcolata dal software. La sincronizzazione fisica tra camera e attuatore non è compresa nel Capstone e richiederà l'encoder della linea.
 
-## Scelte progettuali
+## Limiti attuali
 
-Il sistema è volutamente prudenziale: è preferibile accettare un numero limitato di falsi positivi, che possono essere verificati dall'operatore tra gli scarti, piuttosto che lasciare passare prodotti chiaramente non conformi.
+La validazione è stata eseguita su video registrati. La lettura da videocamera USB è predisposta per la calibrazione, ma l'elaborazione continua con hardware reale non è stata ancora validata.
 
-L'integrazione con encoder, sistema fisico di scarto, dispositivi edge e gestionale aziendale resta fuori dal perimetro del Capstone.
-
-## Prossimi passi
-
-La baseline V1 è integrata nella parte applicativa. La dashboard gestisce già due profili di acquisizione validati sui video di prova, permette di calibrare ROI e deadline senza modificare il classificatore ed è predisposta per file video, videocamera USB e stream IP.
-
-La dashboard è focalizzata sull'uso con video registrati, coerente con il perimetro della consegna. L'operatore inserisce data di produzione, descrizione prodotto e lotto, seleziona il video di prova e calibra ROI e deadline sul primo fotogramma. Dalla stessa schermata è possibile avviare l'analisi YOLO: `visionTar.py` viene eseguito in modalità headless e registra nella sessione i difetti finalizzati `cotto`, `poco`, `blob` e `rotto`.
-
-Il report finale scaricabile è `report_lotti.csv`, con data, prodotto, lotto, numero di rilevazioni, totale analizzati, totale scarti e dettaglio per tipologia. Per ogni lotto il CSV separa i valori assoluti dalle percentuali. Il collegamento continuo a videocamera, encoder e attuatore resta uno sviluppo successivo.
-
-
-## Predisposizione sistema di scarto
-
-Per ogni difetto finalizzato il sistema produce anche un evento tecnico separato dal report qualità. L'evento conserva bounding box in pixel e coordinate normalizzate, timestamp/frame finale e la porzione trasversale del nastro occupata dal prodotto.
-
-La larghezza utile della ROI può essere suddivisa in un numero configurabile di botole. In base all'estensione verticale della bounding box, il software calcola la prima e l'ultima botola coinvolta e l'elenco delle botole candidate da aprire. Se il prodotto attraversa più zone, vengono indicate più botole adiacenti.
-
-La componente longitudinale non viene trasformata in un comando hardware nel Capstone: frame e timestamp costituiscono il riferimento che un futuro encoder userà per determinare il momento di apertura delle botole.
-
-Il file tecnico scaricabile dalla dashboard è denominato `eventi_scarto_<lotto>_<prodotto>.csv`. Il report qualità per lotto resta invece sintetico e separato.
-
-La dashboard prevede due sorgenti di input: video registrato e videocamera USB. La modalità videocamera permette di selezionare l'indice del dispositivo e acquisire un fotogramma di calibrazione; l'elaborazione continua live resta da validare quando sarà disponibile l'hardware. Il modulo `video_source.py` supporta inoltre sorgenti stream a livello di astrazione software.
-
-
-## Simulatore OpenCV delle botole
-
-La dashboard di produzione è stata resa compatta per un pannello da circa 15 pollici. Il flusso video resta centrale; input, ROI, deadline e parametri di nastro/botole sono raccolti nella colonna sinistra, mentre sessione, contatori ed esportazione sono disposti nella colonna destra per limitare lo scroll operativo.
-
-Il prototipo usa OpenCV anche per simulare visivamente il banco di scarto. La configurazione iniziale è un nastro da 40 cm diviso in 20 botole nominali da 2 cm. Quando un track viene finalizzato come difettoso, la bounding box viene mappata sulle zone trasversali interessate e il pannello laterale delle botole evidenzia in rosso quelle candidate all'apertura. Questa visualizzazione è una simulazione software: la selezione delle botole deriva dalle coordinate calcolate, mentre il momento fisico di apertura sarà sincronizzato dall'encoder quando l'hardware sarà disponibile.
+Encoder, attuatore e integrazione con il gestionale non fanno parte della versione consegnata.
