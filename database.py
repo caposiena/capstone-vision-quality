@@ -212,3 +212,37 @@ def build_lot_report_rows(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
         ).fetchall()
 
     return [dict(row) for row in rows]
+
+
+def build_session_report_rows(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """Restituisce una riga per ogni rilevazione/sessione, senza aggregare lotti ripetuti."""
+    with get_connection(db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                s.id AS rilevazione_id,
+                s.production_date,
+                s.product_description,
+                s.lot_code,
+                s.started_at,
+                s.ended_at,
+                COUNT(d.id) AS totale_scarti,
+                SUM(CASE WHEN d.defect_class = 'cotto' THEN 1 ELSE 0 END) AS cotto,
+                SUM(CASE WHEN d.defect_class = 'poco' THEN 1 ELSE 0 END) AS poco,
+                SUM(CASE WHEN d.defect_class = 'blob' THEN 1 ELSE 0 END) AS blob,
+                SUM(CASE WHEN d.defect_class = 'rotto' THEN 1 ELSE 0 END) AS rotto
+            FROM production_sessions s
+            LEFT JOIN defect_events d ON d.session_id = s.id
+            WHERE s.ended_at IS NOT NULL
+            GROUP BY
+                s.id,
+                s.production_date,
+                s.product_description,
+                s.lot_code,
+                s.started_at,
+                s.ended_at
+            ORDER BY s.id
+            """
+        ).fetchall()
+
+    return [dict(row) for row in rows]
