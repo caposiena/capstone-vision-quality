@@ -122,61 +122,43 @@ def draw_acquisition_overlay(
 
 def build_trapdoor_panel(
     trapdoor_count: int,
+    panel_height: int,
+    panel_width: int = 56,
     active_gates: list[int] | None = None,
     label: str | None = None,
     track_id: int | None = None,
 ):
+    """Crea una matrice botole con la stessa altezza visiva della ROI video."""
+    import numpy as np
+
     gates = max(1, int(trapdoor_count))
     active = set(active_gates or [])
-    panel_h = 420
-    panel_w = 86
-    canvas = 255 * __import__("numpy").ones((panel_h, panel_w, 3), dtype="uint8")
+    panel_h = max(gates, int(panel_height))
+    panel_w = max(42, int(panel_width))
+    canvas = np.full((panel_h, panel_w, 3), 245, dtype="uint8")
 
-    cv2.putText(
-        canvas,
-        "BOT.",
-        (8, 18),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.42,
-        (25, 25, 25),
-        1,
-        cv2.LINE_AA,
-    )
-
-    top = 28
-    bottom = panel_h - 12
-    usable = max(1, bottom - top)
-    cell_h = usable / gates
-
+    cell_h = panel_h / gates
     for gate in range(1, gates + 1):
-        y1 = int(top + (gate - 1) * cell_h)
-        y2 = int(top + gate * cell_h) - 1
+        y1 = int((gate - 1) * cell_h)
+        y2 = min(panel_h - 1, int(gate * cell_h) - 1)
         fill = (40, 40, 220) if gate in active else (225, 225, 225)
-        border = (20, 20, 20) if gate in active else (150, 150, 150)
-        cv2.rectangle(canvas, (8, y1), (panel_w - 8, y2), fill, -1)
-        cv2.rectangle(canvas, (8, y1), (panel_w - 8, y2), border, 1)
-        cv2.putText(
-            canvas,
-            str(gate),
-            (15, min(y2 - 2, y1 + 10)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.28,
-            (255, 255, 255) if gate in active else (70, 70, 70),
-            1,
-            cv2.LINE_AA,
-        )
+        border = (20, 20, 20) if gate in active else (145, 145, 145)
+        cv2.rectangle(canvas, (0, y1), (panel_w - 1, y2), fill, -1)
+        cv2.rectangle(canvas, (0, y1), (panel_w - 1, y2), border, 1)
 
-    if active and track_id is not None:
-        cv2.putText(
-            canvas,
-            f"ID {track_id}",
-            (8, panel_h - 2),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.28,
-            (25, 25, 25),
-            1,
-            cv2.LINE_AA,
-        )
+        cell_pixels = max(1, y2 - y1 + 1)
+        if cell_pixels >= 8:
+            baseline = y1 + max(7, min(cell_pixels - 1, int(cell_pixels * 0.72)))
+            cv2.putText(
+                canvas,
+                str(gate),
+                (4, baseline),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.26,
+                (255, 255, 255) if gate in active else (65, 65, 65),
+                1,
+                cv2.LINE_AA,
+            )
 
     return cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
 
@@ -456,13 +438,34 @@ with center_col:
         h, w = camera_frame.shape[:2]
         frame_data = (camera_frame, w, h, 0.0)
 
-    trapdoor_col, video_col = st.columns([0.18, 0.82], gap="small")
+    display_video_width = 280
+    display_gate_width = 56
+    display_video_height = 180
+    if frame_data is not None:
+        raw_roi = crop_to_roi(
+            frame_data[0],
+            st.session_state.roi_left,
+            st.session_state.roi_right,
+            st.session_state.roi_top,
+            st.session_state.roi_bottom,
+        )
+        raw_h, raw_w = raw_roi.shape[:2]
+        display_video_height = max(
+            st.session_state.trapdoor_count,
+            int(round(display_video_width * raw_h / max(1, raw_w))),
+        )
+
+    trapdoor_col, video_col = st.columns([0.17, 0.83], gap="small")
     with trapdoor_col:
         trapdoor_frame = st.empty()
         trapdoor_frame.image(
-            build_trapdoor_panel(st.session_state.trapdoor_count),
+            build_trapdoor_panel(
+                st.session_state.trapdoor_count,
+                panel_height=display_video_height,
+                panel_width=display_gate_width,
+            ),
             channels="RGB",
-            width=72,
+            width=display_gate_width,
         )
     with video_col:
         video_frame = st.empty()
@@ -493,7 +496,11 @@ with center_col:
             st.session_state.roi_top,
             st.session_state.roi_bottom,
         )
-        video_frame.image(cropped_overlay, channels="RGB", width=280)
+        video_frame.image(
+            cropped_overlay,
+            channels="RGB",
+            width=display_video_width,
+        )
         crop_h, crop_w = cropped_overlay.shape[:2]
         video_caption.caption(
             f"CALIBRAZIONE ROI · {crop_w}×{crop_h} · "
@@ -582,12 +589,14 @@ if start_clicked:
                 trapdoor_frame.image(
                     build_trapdoor_panel(
                         st.session_state.trapdoor_count,
+                        panel_height=display_video_height,
+                        panel_width=display_gate_width,
                         active_gates=active_gates,
                         label=active_label,
                         track_id=active_track_id,
                     ),
                     channels="RGB",
-                    width=72,
+                    width=display_gate_width,
                 )
 
             def update_live_frame(current_frame: int, total_frames: int, frame) -> None:
@@ -599,7 +608,7 @@ if start_clicked:
                     st.session_state.roi_bottom,
                 )
                 height, width = cropped.shape[:2]
-                target_width = 280
+                target_width = display_video_width
                 if width > target_width:
                     scale = target_width / width
                     preview = cv2.resize(
@@ -616,7 +625,10 @@ if start_clicked:
                     [int(cv2.IMWRITE_JPEG_QUALITY), 76],
                 )
                 if ok:
-                    video_frame.image(encoded.tobytes(), use_container_width=True)
+                    video_frame.image(
+                        encoded.tobytes(),
+                        width=display_video_width,
+                    )
 
                 if total_frames > 0:
                     video_caption.caption(
