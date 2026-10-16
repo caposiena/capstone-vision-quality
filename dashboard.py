@@ -266,6 +266,28 @@ st.markdown(
     }
     div[data-testid="stMetricValue"] { font-size: 1.55rem; }
     div[data-testid="stFileUploader"] { margin-bottom: -0.35rem; }
+    div[data-testid="stFileUploaderDropzone"] {
+        min-height: 2.4rem;
+        padding: 0.25rem 0.45rem;
+    }
+    div[data-testid="stFileUploaderDropzone"] section {
+        padding: 0 !important;
+    }
+    div[data-testid="stFileUploaderDropzoneInstructions"] {
+        display: none;
+    }
+    div[data-baseweb="select"] > div {
+        min-height: 2.15rem;
+    }
+    div[data-testid="stNumberInput"] input {
+        min-height: 2.15rem;
+        padding-top: 0.2rem;
+        padding-bottom: 0.2rem;
+    }
+    div[data-testid="stSlider"] {
+        padding-top: 0;
+        padding-bottom: 0;
+    }
     .visiontar-header {
         font-size: 1.55rem;
         font-weight: 700;
@@ -308,7 +330,7 @@ with meta2:
 with meta3:
     lot_code = st.text_input("Lotto", placeholder="L251016A")
 
-left_col, center_col, right_col = st.columns([0.18, 0.52, 0.30], gap="small")
+left_col, center_col, right_col = st.columns([0.16, 0.54, 0.30], gap="small")
 
 with left_col:
     st.markdown("#### Input")
