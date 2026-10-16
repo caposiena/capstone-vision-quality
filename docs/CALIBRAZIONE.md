@@ -1,19 +1,56 @@
 # Calibrazione e validazione
 
-Questo documento riassume il percorso seguito per arrivare alla baseline V1.
+La baseline V1 è stata definita mediante prove su video reali e confronto con conteggi manuali dei difetti.
 
-La calibrazione non è stata fatta scegliendo soglie a caso. Abbiamo osservato il comportamento del modello sui video reali e confrontato i risultati con un conteggio manuale dei difetti.
+Il video 2 è stato utilizzato come riferimento di calibrazione. La pipeline combina detection frame per frame, tracking leggero e un responso finale univoco per ogni track. Per i difetti di cottura viene utilizzato un supporto basato su descrittori HSV e Lab; per la classe `rotto` vengono considerati anche indicatori geometrici quali circolarità, solidità, rapporto larghezza/altezza ed extent. La deadline è posizionata prima delle zone maggiormente influenzate da riflessi o variazioni di illuminazione.
 
-Il video 2 è stato usato per la calibrazione. Oltre alle detection frame per frame abbiamo introdotto un tracking leggero e un CSV con un solo responso finale per ogni track. Per i difetti di cottura abbiamo aggiunto una conferma basata su HSV e Lab, mentre per i taralli rotti abbiamo usato anche indicatori geometrici come circolarità, solidità, rapporto tra larghezza e altezza ed extent. La deadline è stata regolata osservando il video per congelare il responso prima delle zone più disturbate da riflessi o luce non uniforme.
+## Video 2 - calibrazione
 
-Sul video 2 il conteggio manuale era: cotto 6, poco 5, blob 7, rotto 14. Il sistema ha restituito: cotto 6, poco 5, blob 6, rotto 15.
+Conteggio manuale:
+- cotto: 6
+- poco: 5
+- blob: 7
+- rotto: 14
 
-A quel punto abbiamo smesso di modificare il sistema sul video 2, per evitare di adattarlo troppo a un singolo caso.
+Risultato della baseline:
+- cotto: 6
+- poco: 5
+- blob: 6
+- rotto: 15
 
-Il video 3 è stato usato come prima validazione indipendente. Il conteggio manuale era: cotto 2, poco 3, blob 1, rotto 8. Il sistema ha restituito: cotto 2, poco 3, blob 1, rotto 9.
+## Video 3 - validazione indipendente
 
-Il video 1 presentava uno zoom diverso e condizioni meno uniformi nella parte alta dell'immagine, con anche un'ombra iniziale. Abbiamo quindi adattato solo ROI e deadline, lasciando congelate le soglie di classificazione. Sul difetto rotto il conteggio manuale era 14, mentre il sistema ne ha segnalati 17. Lo scostamento è stato considerato accettabile nel contesto del test e ha evidenziato un limite reale: zoom e illuminazione influenzano la parte geometrica del riconoscimento.
+Conteggio manuale:
+- cotto: 2
+- poco: 3
+- blob: 1
+- rotto: 8
 
-Dopo i tre video la baseline V1 è stata congelata. Addestramento e calibrazione sono considerati conclusi per questa fase del Capstone. Eventuali modifiche future dovranno essere motivate da errori sistematici osservati su nuovi dati, non dal singolo caso.
+Risultato della baseline:
+- cotto: 2
+- poco: 3
+- blob: 1
+- rotto: 9
 
-Per un futuro utilizzo industriale sarà importante lavorare con camera fissa, distanza costante e illuminazione controllata.
+## Video 1 - prova di robustezza
+
+Il video 1 presenta uno zoom differente e condizioni di illuminazione meno uniformi, inclusa un'ombra nella fase iniziale. Per questa prova sono stati adattati ROI e deadline senza modificare le soglie di classificazione.
+
+Riferimento manuale disponibile:
+- rotto: 14
+
+Risultato della baseline:
+- rotto: 17
+
+Il test evidenzia la sensibilità della componente geometrica a distanza di ripresa, zoom e illuminazione.
+
+## Condizioni di utilizzo
+
+Per una futura installazione industriale sono raccomandati:
+- camera fissa;
+- distanza di ripresa costante;
+- illuminazione controllata;
+- prodotto disposto su singolo strato;
+- calibrazione coerente della ROI rispetto alla larghezza utile del nastro.
+
+Le soglie di classificazione della baseline V1 restano congelate; eventuali modifiche devono essere motivate da evidenze ripetibili su nuovi dati.
