@@ -529,6 +529,8 @@ with right_col:
         summary = get_session_summary(summary_session_id)
     else:
         summary = {
+            "totale_analizzati": 0,
+            "buoni": 0,
             "totale_scarti": 0,
             "cotto": 0,
             "poco": 0,
@@ -538,18 +540,23 @@ with right_col:
 
     m1, m2 = st.columns(2)
     with m1:
-        total_metric = st.empty()
+        analyzed_metric = st.empty()
     with m2:
-        rotto_metric = st.empty()
+        total_metric = st.empty()
     m3, m4 = st.columns(2)
     with m3:
-        cotto_metric = st.empty()
+        rotto_metric = st.empty()
     with m4:
+        cotto_metric = st.empty()
+    m5, m6 = st.columns(2)
+    with m5:
         poco_metric = st.empty()
-    blob_metric = st.empty()
+    with m6:
+        blob_metric = st.empty()
 
     def render_counters(values: dict[str, int]) -> None:
-        total_metric.metric("Totale", values["totale_scarti"])
+        analyzed_metric.metric("Analizzati", values.get("totale_analizzati", 0))
+        total_metric.metric("Scarti", values["totale_scarti"])
         rotto_metric.metric("Rotto", values["rotto"])
         cotto_metric.metric("Cotto", values["cotto"])
         poco_metric.metric("Poco", values["poco"])
@@ -563,7 +570,7 @@ with right_col:
     else:
         status_box.caption("Pronto per la sessione.")
 
-    cumulative_rows_ui = build_session_report_rows()
+    cumulative_rows_ui = build_lot_report_rows()
     if cumulative_rows_ui:
         lot_codes_ui = list(dict.fromkeys(row["lot_code"] for row in cumulative_rows_ui))
         st.markdown("#### Esportazione")
@@ -622,32 +629,40 @@ with right_col:
 
         export_rows_ui = [
             {
-                "Rilevazione": row["rilevazione_id"],
                 "Data produzione": row["production_date"],
                 "Prodotto": row["product_description"],
                 "Lotto": row["lot_code"],
-                "Inizio": row["started_at"],
-                "Fine": row["ended_at"],
+                "Rilevazioni": row["sessions"],
+                "Totale analizzati": row["totale_analizzati"],
                 "Totale scarti": row["totale_scarti"],
+                "Scarto %": row["scarto_pct"],
                 "Cotto": row["cotto"],
+                "Cotto %": row["cotto_pct"],
                 "Poco": row["poco"],
+                "Poco %": row["poco_pct"],
                 "Blob": row["blob"],
+                "Blob %": row["blob_pct"],
                 "Rotto": row["rotto"],
+                "Rotto %": row["rotto_pct"],
             }
             for row in filtered_rows_ui
         ]
         export_fields_ui = [
-            "Rilevazione",
             "Data produzione",
             "Prodotto",
             "Lotto",
-            "Inizio",
-            "Fine",
+            "Rilevazioni",
+            "Totale analizzati",
             "Totale scarti",
+            "Scarto %",
             "Cotto",
+            "Cotto %",
             "Poco",
+            "Poco %",
             "Blob",
+            "Blob %",
             "Rotto",
+            "Rotto %",
         ]
         export_output_ui = io.StringIO()
         export_writer_ui = csv.DictWriter(
@@ -667,54 +682,63 @@ with right_col:
             use_container_width=True,
         )
 
-st.markdown("#### Area nastro")
-belt1, belt2, belt3, belt4, belt5, belt6, belt7, belt8 = st.columns(
-    [0.08, 0.09, 0.14, 0.14, 0.14, 0.14, 0.15, 0.12],
-    gap="small",
-)
+settings_pad, settings_col, settings_rest = st.columns([0.05, 0.58, 0.37], gap="small")
+with settings_col:
+    st.markdown("#### Area nastro")
 
-with belt1:
-    st.number_input(
-        "Botole",
-        min_value=2,
-        max_value=40,
-        step=1,
-        key="trapdoor_count",
-    )
-with belt2:
-    st.number_input(
-        "Nastro cm",
-        min_value=10.0,
-        max_value=120.0,
-        step=1.0,
-        key="belt_width_cm",
-    )
-with belt3:
-    st.slider("SX", 0, 45, key="roi_left")
-with belt4:
-    st.slider("DX", 0, 45, key="roi_right")
-with belt5:
-    st.slider("ALTO", 0, 45, key="roi_top")
-with belt6:
-    st.slider("BASSO", 0, 45, key="roi_bottom")
-with belt7:
-    st.slider("DEADLINE", 0, 100, key="deadline_x")
-with belt8:
-    st.write("")
-    if st.button("Preset", use_container_width=True):
-        load_profile(st.session_state.profile_key)
-        st.session_state.display_mode = "calibration"
-        st.rerun()
+    group_left, group_right = st.columns(2, gap="medium")
 
-gate_width_cm = (
-    st.session_state.belt_width_cm
-    / max(1, st.session_state.trapdoor_count)
-)
-st.caption(
-    f"{st.session_state.trapdoor_count} botole · "
-    f"{st.session_state.belt_width_cm:.0f} cm nastro · "
-    f"{gate_width_cm:.1f} cm/botola"
-)
+    with group_left:
+        pair1a, pair1b = st.columns(2)
+        with pair1a:
+            st.number_input(
+                "Botole",
+                min_value=2,
+                max_value=40,
+                step=1,
+                key="trapdoor_count",
+            )
+        with pair1b:
+            st.number_input(
+                "Nastro cm",
+                min_value=10.0,
+                max_value=120.0,
+                step=1.0,
+                key="belt_width_cm",
+            )
+
+        pair2a, pair2b = st.columns(2)
+        with pair2a:
+            st.slider("SX", 0, 45, key="roi_left")
+        with pair2b:
+            st.slider("DX", 0, 45, key="roi_right")
+
+    with group_right:
+        pair3a, pair3b = st.columns(2)
+        with pair3a:
+            st.slider("ALTO", 0, 45, key="roi_top")
+        with pair3b:
+            st.slider("BASSO", 0, 45, key="roi_bottom")
+
+        pair4a, pair4b = st.columns(2)
+        with pair4a:
+            st.slider("DEADLINE", 0, 100, key="deadline_x")
+        with pair4b:
+            st.write("")
+            if st.button("Preset", use_container_width=True):
+                load_profile(st.session_state.profile_key)
+                st.session_state.display_mode = "calibration"
+                st.rerun()
+
+    gate_width_cm = (
+        st.session_state.belt_width_cm
+        / max(1, st.session_state.trapdoor_count)
+    )
+    st.caption(
+        f"{st.session_state.trapdoor_count} botole · "
+        f"{st.session_state.belt_width_cm:.0f} cm nastro · "
+        f"{gate_width_cm:.1f} cm/botola"
+    )
 
 
 if start_clicked:
@@ -744,6 +768,7 @@ if start_clicked:
                     )
 
             live_counts = {
+                "totale_analizzati": 0,
                 "totale_scarti": 0,
                 "cotto": 0,
                 "poco": 0,
@@ -921,6 +946,7 @@ if start_clicked:
                     )
 
                 st.session_state.poco_diagnostic = poco_candidates_lost
+                total_analyzed = len(final_by_track)
 
                 session_id = create_session(
                     production_date=production_date,
@@ -963,37 +989,48 @@ if start_clicked:
                             if inserted:
                                 imported += 1
 
-                close_session(session_id)
+                close_session(
+                    session_id,
+                    total_analyzed=total_analyzed,
+                )
 
-                cumulative_rows = build_session_report_rows()
+                cumulative_rows = build_lot_report_rows()
                 export_rows = [
                     {
-                        "Rilevazione": row["rilevazione_id"],
                         "Data produzione": row["production_date"],
                         "Prodotto": row["product_description"],
                         "Lotto": row["lot_code"],
-                        "Inizio": row["started_at"],
-                        "Fine": row["ended_at"],
+                        "Rilevazioni": row["sessions"],
+                        "Totale analizzati": row["totale_analizzati"],
                         "Totale scarti": row["totale_scarti"],
+                        "Scarto %": row["scarto_pct"],
                         "Cotto": row["cotto"],
+                        "Cotto %": row["cotto_pct"],
                         "Poco": row["poco"],
+                        "Poco %": row["poco_pct"],
                         "Blob": row["blob"],
+                        "Blob %": row["blob_pct"],
                         "Rotto": row["rotto"],
+                        "Rotto %": row["rotto_pct"],
                     }
                     for row in cumulative_rows
                 ]
                 cumulative_fields = [
-                    "Rilevazione",
                     "Data produzione",
                     "Prodotto",
                     "Lotto",
-                    "Inizio",
-                    "Fine",
+                    "Rilevazioni",
+                    "Totale analizzati",
                     "Totale scarti",
+                    "Scarto %",
                     "Cotto",
+                    "Cotto %",
                     "Poco",
+                    "Poco %",
                     "Blob",
+                    "Blob %",
                     "Rotto",
+                    "Rotto %",
                 ]
                 cumulative_output = io.StringIO()
                 cumulative_writer = csv.DictWriter(
@@ -1019,7 +1056,7 @@ if start_clicked:
                     else ""
                 )
                 st.session_state.analysis_summary = (
-                    f"Sessione #{session_id} · {imported} scarti"
+                    f"Sessione #{session_id} · {total_analyzed} analizzati · {imported} scarti"
                     f"{diagnostic_suffix}"
                 )
                 st.session_state.display_mode = "processed"
