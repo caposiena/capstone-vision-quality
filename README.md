@@ -52,7 +52,7 @@ capstone-vision-quality/
 
 `buildDatasetV2.py` prepara la struttura del dataset V2.
 
-`dashboard.py` contiene la prima dashboard Streamlit per selezionare la sorgente video e calibrare visivamente ROI e deadline.
+`dashboard.py` contiene l'interfaccia Streamlit per selezionare la sorgente video, configurare ROI e deadline e avviare l'analisi.
 
 `acquisition_config.py` contiene i profili di acquisizione separati dalle soglie del classificatore.
 
@@ -100,9 +100,9 @@ L'integrazione con encoder, sistema fisico di scarto, dispositivi edge e gestion
 
 ## Prossimi passi
 
-Con la baseline V1 congelata è iniziata la parte applicativa. La dashboard gestisce già due profili di acquisizione validati sui video di prova, permette di calibrare ROI e deadline senza modificare il classificatore ed è predisposta per file video, videocamera USB e stream IP.
+La baseline V1 è integrata nella parte applicativa. La dashboard gestisce già due profili di acquisizione validati sui video di prova, permette di calibrare ROI e deadline senza modificare il classificatore ed è predisposta per file video, videocamera USB e stream IP.
 
-La dashboard è focalizzata sull'uso con video registrati, coerente con il perimetro della consegna. L'operatore inserisce data di produzione, descrizione prodotto e lotto, seleziona il video di prova e calibra ROI e deadline sul primo fotogramma. Dalla stessa schermata può poi avviare l'analisi YOLO: `visionTar.py` viene eseguito in modalità headless, produce il video annotato e registra automaticamente nella sessione i difetti finalizzati `cotto`, `poco`, `blob` e `rotto`.
+La dashboard è focalizzata sull'uso con video registrati, coerente con il perimetro della consegna. L'operatore inserisce data di produzione, descrizione prodotto e lotto, seleziona il video di prova e calibra ROI e deadline sul primo fotogramma. Dalla stessa schermata è possibile avviare l'analisi YOLO: `visionTar.py` viene eseguito in modalità headless e registra nella sessione i difetti finalizzati `cotto`, `poco`, `blob` e `rotto`.
 
 Il report finale scaricabile è `report_lotti.csv`, con data, prodotto, lotto, numero di sessioni, totale scarti e dettaglio per tipologia. Il collegamento a videocamera live, encoder e attuatore resta documentato come sviluppo successivo.
 
