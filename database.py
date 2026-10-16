@@ -214,28 +214,58 @@ def get_session_summary(session_id: int, db_path: Path = DB_PATH) -> dict[str, i
         summary[str(row["defect_class"])] = int(row["total"])
 
     summary["totale_scarti"] = sum(summary[name] for name in DEFECT_CLASSES)
+    session = get_session(session_id, db_path)
+    summary["totale_analizzati"] = int(
+        (session or {}).get("total_analyzed") or 0
+    )
+    summary["buoni"] = max(
+        0,
+        summary["totale_analizzati"] - summary["totale_scarti"],
+    )
     return summary
 
 
 def build_lot_report_rows(db_path: Path = DB_PATH) -> list[dict[str, Any]]:
+    """Una riga per lotto, aggregando correttamente tutte le rilevazioni."""
     with get_connection(db_path) as conn:
         rows = conn.execute(
             """
+            WITH session_stats AS (
+                SELECT
+                    s.id,
+                    s.production_date,
+                    s.product_description,
+                    s.lot_code,
+                    COALESCE(s.total_analyzed, 0) AS totale_analizzati,
+                    COUNT(d.id) AS totale_scarti,
+                    COALESCE(SUM(CASE WHEN d.defect_class = 'cotto' THEN 1 ELSE 0 END), 0) AS cotto,
+                    COALESCE(SUM(CASE WHEN d.defect_class = 'poco' THEN 1 ELSE 0 END), 0) AS poco,
+                    COALESCE(SUM(CASE WHEN d.defect_class = 'blob' THEN 1 ELSE 0 END), 0) AS blob,
+                    COALESCE(SUM(CASE WHEN d.defect_class = 'rotto' THEN 1 ELSE 0 END), 0) AS rotto
+                FROM production_sessions s
+                LEFT JOIN defect_events d ON d.session_id = s.id
+                WHERE s.ended_at IS NOT NULL
+                GROUP BY
+                    s.id,
+                    s.production_date,
+                    s.product_description,
+                    s.lot_code,
+                    s.total_analyzed
+            )
             SELECT
-                s.production_date,
-                s.product_description,
-                s.lot_code,
-                COUNT(DISTINCT s.id) AS sessions,
-                COALESCE(SUM(s.total_analyzed), 0) AS totale_analizzati,
-                COUNT(d.id) AS totale_scarti,
-                COALESCE(SUM(CASE WHEN d.defect_class = 'cotto' THEN 1 ELSE 0 END), 0) AS cotto,
-                COALESCE(SUM(CASE WHEN d.defect_class = 'poco' THEN 1 ELSE 0 END), 0) AS poco,
-                COALESCE(SUM(CASE WHEN d.defect_class = 'blob' THEN 1 ELSE 0 END), 0) AS blob,
-                COALESCE(SUM(CASE WHEN d.defect_class = 'rotto' THEN 1 ELSE 0 END), 0) AS rotto
-            FROM production_sessions s
-            LEFT JOIN defect_events d ON d.session_id = s.id
-            GROUP BY s.production_date, s.product_description, s.lot_code
-            ORDER BY s.production_date, s.product_description, s.lot_code
+                production_date,
+                product_description,
+                lot_code,
+                COUNT(*) AS sessions,
+                SUM(totale_analizzati) AS totale_analizzati,
+                SUM(totale_scarti) AS totale_scarti,
+                SUM(cotto) AS cotto,
+                SUM(poco) AS poco,
+                SUM(blob) AS blob,
+                SUM(rotto) AS rotto
+            FROM session_stats
+            GROUP BY production_date, product_description, lot_code
+            ORDER BY production_date, product_description, lot_code
             """
         ).fetchall()
 
