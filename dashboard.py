@@ -14,10 +14,8 @@ from acquisition_config import DEFAULT_BELT_WIDTH_CM, DEFAULT_PROFILE_KEY, DEFAU
 from database import (
     add_defect_event,
     build_lot_report_rows,
-    build_session_report_rows,
     close_session,
     create_session,
-    get_session,
     get_session_summary,
     init_db,
 )
@@ -297,6 +295,10 @@ if "machine_events_bytes" not in st.session_state:
     st.session_state.machine_events_bytes = None
 if "machine_events_filename" not in st.session_state:
     st.session_state.machine_events_filename = None
+if "poco_audit_bytes" not in st.session_state:
+    st.session_state.poco_audit_bytes = None
+if "poco_audit_filename" not in st.session_state:
+    st.session_state.poco_audit_filename = None
 if "camera_preview_frame" not in st.session_state:
     st.session_state.camera_preview_frame = None
 
@@ -453,6 +455,8 @@ with input_col:
             st.session_state.last_live_frame = None
             st.session_state.machine_events_bytes = None
             st.session_state.machine_events_filename = None
+            st.session_state.poco_audit_bytes = None
+            st.session_state.poco_audit_filename = None
 
         try:
             input_path = prepare_uploaded_video(uploaded)
@@ -752,6 +756,18 @@ with right_col:
             use_container_width=True,
         )
 
+        if (
+            st.session_state.poco_audit_bytes
+            and st.session_state.poco_audit_filename
+        ):
+            st.download_button(
+                "Audit POCO",
+                data=st.session_state.poco_audit_bytes,
+                file_name=st.session_state.poco_audit_filename,
+                mime="text/csv",
+                use_container_width=True,
+            )
+
 
 
 if start_clicked:
@@ -885,9 +901,9 @@ if start_clicked:
                     f"{run_input.stem}_finali_test.csv"
                 )
 
-                # Diagnostica non invasiva: individua track con evidenza YOLO
-                # "poco" che non arrivano al responso finale POCO. Non cambia
-                # alcuna soglia del classificatore.
+                # Audit POCO: conserva tutte le osservazioni YOLO poco per track
+                # e le confronta con il responso finale. Serve a distinguere
+                # oscillazione di classe da problemi di tracking/colore.
                 poco_track_stats: dict[int, dict[str, float]] = {}
                 if Path(detections_path).exists():
                     with Path(detections_path).open(
@@ -907,22 +923,33 @@ if start_clicked:
                                 s_value = float(row.get("s_median") or 0.0)
                                 lab_l_value = float(row.get("lab_l_median") or 0.0)
                                 confidence_value = float(row.get("confidence") or 0.0)
+                                frame_value = int(float(row.get("frame") or 0))
                             except ValueError:
-                                continue
-
-                            if not (
-                                v_value >= 212.0
-                                and lab_l_value >= 208.0
-                                and s_value <= 105.0
-                            ):
                                 continue
 
                             stats = poco_track_stats.setdefault(
                                 track_id,
-                                {"count": 0.0, "confidence_sum": 0.0},
+                                {
+                                    "count": 0.0,
+                                    "confidence_sum": 0.0,
+                                    "max_lab_l": 0.0,
+                                    "strong_count": 0.0,
+                                    "first_frame": 0.0,
+                                    "last_frame": 0.0,
+                                },
                             )
                             stats["count"] += 1.0
                             stats["confidence_sum"] += confidence_value
+                            stats["max_lab_l"] = max(stats["max_lab_l"], lab_l_value)
+                            if (
+                                v_value >= 212.0
+                                and lab_l_value >= 208.0
+                                and s_value <= 105.0
+                            ):
+                                stats["strong_count"] += 1.0
+                            if stats["first_frame"] == 0.0:
+                                stats["first_frame"] = float(frame_value)
+                            stats["last_frame"] = float(frame_value)
 
                 final_by_track: dict[int, dict[str, str]] = {}
                 if finali_path.exists():
@@ -936,34 +963,69 @@ if start_clicked:
                             if raw_track:
                                 final_by_track[int(float(raw_track))] = row
 
+                poco_audit_rows = []
                 poco_candidates_lost = []
-                for track_id, stats in poco_track_stats.items():
-                    if stats["count"] < 2:
-                        continue
+                for track_id, stats in sorted(poco_track_stats.items()):
                     final_row = final_by_track.get(track_id, {})
                     final_label = (final_row.get("responso_finale") or "").strip()
-                    if final_label == "poco":
-                        continue
-                    poco_candidates_lost.append(
-                        {
-                            "track_id": track_id,
-                            "osservazioni": int(stats["count"]),
-                            "conf_media": (
-                                stats["confidence_sum"] / stats["count"]
-                                if stats["count"] > 0
-                                else 0.0
-                            ),
-                            "finale": final_label or "nessuno",
-                            "supporto_colore": (
-                                final_row.get("supporto_colore") or ""
-                            ).strip(),
-                            "lab_l": (
-                                final_row.get("track_lab_l_median") or ""
-                            ).strip(),
-                        }
-                    )
+                    audit_row = {
+                        "track_id": track_id,
+                        "osservazioni_poco": int(stats["count"]),
+                        "osservazioni_poco_forti": int(stats["strong_count"]),
+                        "conf_media_poco": round(
+                            stats["confidence_sum"] / stats["count"],
+                            4,
+                        ) if stats["count"] else 0.0,
+                        "max_lab_l_poco": round(stats["max_lab_l"], 2),
+                        "frame_prima_poco": int(stats["first_frame"]),
+                        "frame_ultima_poco": int(stats["last_frame"]),
+                        "responso_finale": final_label or "nessuno",
+                        "supporto_colore_finale": (
+                            final_row.get("supporto_colore") or ""
+                        ).strip(),
+                        "lab_l_finale": (
+                            final_row.get("track_lab_l_median") or ""
+                        ).strip(),
+                    }
+                    poco_audit_rows.append(audit_row)
 
+                    if (
+                        int(stats["count"]) >= 2
+                        and int(stats["strong_count"]) >= 1
+                        and final_label != "poco"
+                    ):
+                        poco_candidates_lost.append(audit_row)
+
+                audit_output = io.StringIO()
+                audit_fields = [
+                    "track_id",
+                    "osservazioni_poco",
+                    "osservazioni_poco_forti",
+                    "conf_media_poco",
+                    "max_lab_l_poco",
+                    "frame_prima_poco",
+                    "frame_ultima_poco",
+                    "responso_finale",
+                    "supporto_colore_finale",
+                    "lab_l_finale",
+                ]
+                audit_writer = csv.DictWriter(
+                    audit_output,
+                    fieldnames=audit_fields,
+                    delimiter=";",
+                    lineterminator="\n",
+                )
+                audit_writer.writeheader()
+                audit_writer.writerows(poco_audit_rows)
+                st.session_state.poco_audit_bytes = (
+                    audit_output.getvalue().encode("utf-8-sig")
+                )
+                st.session_state.poco_audit_filename = (
+                    f"audit_poco_{safe_name(lot_code)}_"
+                    f"{safe_name(product_description)}.csv"
+                )
                 st.session_state.poco_diagnostic = poco_candidates_lost
+
                 total_analyzed = len(final_by_track)
 
                 session_id = create_session(
