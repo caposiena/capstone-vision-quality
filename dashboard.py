@@ -709,18 +709,34 @@ if start_clicked:
                 close_session(session_id)
 
                 cumulative_rows = build_session_report_rows()
+                export_rows = [
+                    {
+                        "Rilevazione": row["rilevazione_id"],
+                        "Data produzione": row["production_date"],
+                        "Prodotto": row["product_description"],
+                        "Lotto": row["lot_code"],
+                        "Inizio": row["started_at"],
+                        "Fine": row["ended_at"],
+                        "Totale scarti": row["totale_scarti"],
+                        "Cotto": row["cotto"],
+                        "Poco": row["poco"],
+                        "Blob": row["blob"],
+                        "Rotto": row["rotto"],
+                    }
+                    for row in cumulative_rows
+                ]
                 cumulative_fields = [
-                    "rilevazione_id",
-                    "production_date",
-                    "product_description",
-                    "lot_code",
-                    "started_at",
-                    "ended_at",
-                    "totale_scarti",
-                    "cotto",
-                    "poco",
-                    "blob",
-                    "rotto",
+                    "Rilevazione",
+                    "Data produzione",
+                    "Prodotto",
+                    "Lotto",
+                    "Inizio",
+                    "Fine",
+                    "Totale scarti",
+                    "Cotto",
+                    "Poco",
+                    "Blob",
+                    "Rotto",
                 ]
                 cumulative_output = io.StringIO()
                 cumulative_writer = csv.DictWriter(
@@ -730,7 +746,7 @@ if start_clicked:
                     lineterminator="\n",
                 )
                 cumulative_writer.writeheader()
-                cumulative_writer.writerows(cumulative_rows)
+                cumulative_writer.writerows(export_rows)
                 Path("report_lotti.csv").write_text(
                     cumulative_output.getvalue(),
                     encoding="utf-8-sig",
@@ -764,18 +780,34 @@ st.markdown(
 summary_session_id = st.session_state.get("last_closed_session_id")
 if summary_session_id is not None:
     cumulative_rows = build_session_report_rows()
+    export_rows = [
+        {
+            "Rilevazione": row["rilevazione_id"],
+            "Data produzione": row["production_date"],
+            "Prodotto": row["product_description"],
+            "Lotto": row["lot_code"],
+            "Inizio": row["started_at"],
+            "Fine": row["ended_at"],
+            "Totale scarti": row["totale_scarti"],
+            "Cotto": row["cotto"],
+            "Poco": row["poco"],
+            "Blob": row["blob"],
+            "Rotto": row["rotto"],
+        }
+        for row in cumulative_rows
+    ]
     cumulative_fields = [
-        "rilevazione_id",
-        "production_date",
-        "product_description",
-        "lot_code",
-        "started_at",
-        "ended_at",
-        "totale_scarti",
-        "cotto",
-        "poco",
-        "blob",
-        "rotto",
+        "Rilevazione",
+        "Data produzione",
+        "Prodotto",
+        "Lotto",
+        "Inizio",
+        "Fine",
+        "Totale scarti",
+        "Cotto",
+        "Poco",
+        "Blob",
+        "Rotto",
     ]
 
     output = io.StringIO()
@@ -786,11 +818,11 @@ if summary_session_id is not None:
         lineterminator="\n",
     )
     writer.writeheader()
-    writer.writerows(cumulative_rows)
+    writer.writerows(export_rows)
 
     st.markdown("#### Registro produzioni")
     st.dataframe(
-        cumulative_rows,
+        export_rows,
         use_container_width=True,
         hide_index=True,
         height=180,
