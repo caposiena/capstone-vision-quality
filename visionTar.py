@@ -1089,6 +1089,7 @@ def process_video(
     annotated_output_path: Path | None = None,
     progress_callback: Callable[[int, int], None] | None = None,
     frame_callback: Callable[[int, int, Any], None] | None = None,
+    gate_callback: Callable[[list[int], str | None, int | None], None] | None = None,
     model_instance: Any | None = None,
     trapdoor_count: int = DEFAULT_TRAPDOOR_COUNT,
 ) -> Path:
@@ -1940,14 +1941,8 @@ def process_video(
                     active_label = str(recent_gate_event["label"])
                     active_track_id = int(recent_gate_event["track_id"])
 
-                draw_trapdoor_simulator(
-                    frame,
-                    trapdoor_count,
-                    active_gates=active_gates,
-                    label=active_label,
-                    track_id=active_track_id,
-                    roi_rect=(roi_x1, roi_y1, roi_x2, roi_y2),
-                )
+                if gate_callback is not None:
+                    gate_callback(active_gates, active_label, active_track_id)
 
                 if annotated_writer is not None:
                     annotated_writer.write(frame)
