@@ -226,6 +226,58 @@ def safe_name(value: str) -> str:
     return cleaned.strip("_") or "lotto"
 
 
+def build_lot_csv_rows(lot_rows: list[dict]) -> tuple[list[dict], list[str]]:
+    """Due righe per lotto: valori assoluti e percentuali."""
+    rows: list[dict] = []
+    for row in lot_rows:
+        common = {
+            "Data produzione": row["production_date"],
+            "Prodotto": row["product_description"],
+            "Lotto": row["lot_code"],
+        }
+        rows.append(
+            {
+                **common,
+                "Tipo": "Valori",
+                "Rilevazioni": row["sessions"],
+                "Analizzati": row["totale_analizzati"],
+                "Scarti": row["totale_scarti"],
+                "Cotto": row["cotto"],
+                "Poco": row["poco"],
+                "Blob": row["blob"],
+                "Rotto": row["rotto"],
+            }
+        )
+        rows.append(
+            {
+                **common,
+                "Tipo": "Percentuali",
+                "Rilevazioni": "",
+                "Analizzati": 100.0 if row["totale_analizzati"] > 0 else 0.0,
+                "Scarti": row["scarto_pct"],
+                "Cotto": row["cotto_pct"],
+                "Poco": row["poco_pct"],
+                "Blob": row["blob_pct"],
+                "Rotto": row["rotto_pct"],
+            }
+        )
+
+    fields = [
+        "Data produzione",
+        "Prodotto",
+        "Lotto",
+        "Tipo",
+        "Rilevazioni",
+        "Analizzati",
+        "Scarti",
+        "Cotto",
+        "Poco",
+        "Blob",
+        "Rotto",
+    ]
+    return rows, fields
+
+
 init_db()
 init_state()
 
@@ -679,43 +731,9 @@ with right_col:
                 f"{safe_name(lot_codes_ui[end_ui])}"
             )
 
-        export_rows_ui = [
-            {
-                "Data produzione": row["production_date"],
-                "Prodotto": row["product_description"],
-                "Lotto": row["lot_code"],
-                "Rilevazioni": row["sessions"],
-                "Totale analizzati": row["totale_analizzati"],
-                "Totale scarti": row["totale_scarti"],
-                "Scarto %": row["scarto_pct"],
-                "Cotto": row["cotto"],
-                "Cotto %": row["cotto_pct"],
-                "Poco": row["poco"],
-                "Poco %": row["poco_pct"],
-                "Blob": row["blob"],
-                "Blob %": row["blob_pct"],
-                "Rotto": row["rotto"],
-                "Rotto %": row["rotto_pct"],
-            }
-            for row in filtered_rows_ui
-        ]
-        export_fields_ui = [
-            "Data produzione",
-            "Prodotto",
-            "Lotto",
-            "Rilevazioni",
-            "Totale analizzati",
-            "Totale scarti",
-            "Scarto %",
-            "Cotto",
-            "Cotto %",
-            "Poco",
-            "Poco %",
-            "Blob",
-            "Blob %",
-            "Rotto",
-            "Rotto %",
-        ]
+        export_rows_ui, export_fields_ui = build_lot_csv_rows(
+            filtered_rows_ui
+        )
         export_output_ui = io.StringIO()
         export_writer_ui = csv.DictWriter(
             export_output_ui,
@@ -771,6 +789,10 @@ if start_clicked:
                 "rotto": 0,
             }
             render_counters(live_counts)
+
+            def update_live_final(_final_label: str, _track_id: int) -> None:
+                live_counts["totale_analizzati"] += 1
+                render_counters(live_counts)
 
             def update_live_counter(defect_class: str, _track_id: int) -> None:
                 if defect_class in {"cotto", "poco", "blob", "rotto"}:
@@ -851,6 +873,7 @@ if start_clicked:
                     frame_callback=update_live_frame,
                     gate_callback=update_gate_panel,
                     defect_callback=update_live_counter,
+                    final_callback=update_live_final,
                     model_instance=model,
                     trapdoor_count=st.session_state.trapdoor_count,
                 )
@@ -990,43 +1013,9 @@ if start_clicked:
                 )
 
                 cumulative_rows = build_lot_report_rows()
-                export_rows = [
-                    {
-                        "Data produzione": row["production_date"],
-                        "Prodotto": row["product_description"],
-                        "Lotto": row["lot_code"],
-                        "Rilevazioni": row["sessions"],
-                        "Totale analizzati": row["totale_analizzati"],
-                        "Totale scarti": row["totale_scarti"],
-                        "Scarto %": row["scarto_pct"],
-                        "Cotto": row["cotto"],
-                        "Cotto %": row["cotto_pct"],
-                        "Poco": row["poco"],
-                        "Poco %": row["poco_pct"],
-                        "Blob": row["blob"],
-                        "Blob %": row["blob_pct"],
-                        "Rotto": row["rotto"],
-                        "Rotto %": row["rotto_pct"],
-                    }
-                    for row in cumulative_rows
-                ]
-                cumulative_fields = [
-                    "Data produzione",
-                    "Prodotto",
-                    "Lotto",
-                    "Rilevazioni",
-                    "Totale analizzati",
-                    "Totale scarti",
-                    "Scarto %",
-                    "Cotto",
-                    "Cotto %",
-                    "Poco",
-                    "Poco %",
-                    "Blob",
-                    "Blob %",
-                    "Rotto",
-                    "Rotto %",
-                ]
+                export_rows, cumulative_fields = build_lot_csv_rows(
+                    cumulative_rows
+                )
                 cumulative_output = io.StringIO()
                 cumulative_writer = csv.DictWriter(
                     cumulative_output,
