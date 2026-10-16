@@ -692,12 +692,8 @@ def extract_shape_features(frame, x1: int, y1: int, x2: int, y2: int) -> dict[st
     }
 
 
-def calculate_final_verdict(
-    observations,
-    sticky_poco_evidence: list[dict[str, float]] | None = None,
-) -> dict[str, float | str]:
+def calculate_final_verdict(observations) -> dict[str, float | str]:
     """Calcola il responso finale a due stadi con supporto colore prudenziale."""
-    sticky_poco_evidence = sticky_poco_evidence or []
     if len(observations) < TRACK_MIN_FINAL_OBSERVATIONS:
         return {
             "label": "incerto",
@@ -768,35 +764,6 @@ def calculate_final_verdict(
         if top_defect_score > 0
         else 0.0
     )
-
-    # Evidenza specifica "poco": viene calcolata solo sui frame in cui
-    # YOLO ha effettivamente visto il track come poco. In questo modo
-    # alcune osservazioni successive "buono" non cancellano una evidenza
-    # cromatica forte gia raccolta sullo stesso tarallo.
-    poco_observations_list = [
-        obs for obs in observations
-        if obs.get("label") == "poco" and "color" in obs
-    ]
-    poco_observations = len(poco_observations_list)
-    poco_confidences = [float(obs["confidence"]) for obs in poco_observations_list]
-    poco_avg_confidence = (
-        sum(poco_confidences) / poco_observations
-        if poco_observations > 0
-        else 0.0
-    )
-    poco_v_values = sorted(
-        float(obs["color"]["v"]) for obs in poco_observations_list
-    )
-    poco_s_values = sorted(
-        float(obs["color"]["s"]) for obs in poco_observations_list
-    )
-    poco_l_values = sorted(
-        float(obs["color"]["lab_l"]) for obs in poco_observations_list
-    )
-    poco_mid = poco_observations // 2 if poco_observations else 0
-    poco_v = float(poco_v_values[poco_mid]) if poco_v_values else 0.0
-    poco_s = float(poco_s_values[poco_mid]) if poco_s_values else 0.0
-    poco_lab_l = float(poco_l_values[poco_mid]) if poco_l_values else 0.0
 
     track_s_values = sorted(
         obs["color"]["s"] for obs in observations if "color" in obs
@@ -926,86 +893,6 @@ def calculate_final_verdict(
             "track_aspect": track_aspect,
             "track_extent": track_extent,
             "strong_shape_override": True,
-            "rotto_observations": rotto_observations,
-            "rotto_avg_confidence": rotto_avg_confidence,
-            "rotto_score_ratio": rotto_score_ratio,
-        }
-
-    # Isteresi prudenziale per "poco": se lo stesso track e stato visto
-    # almeno due volte come poco e quelle osservazioni hanno il profilo
-    # cromatico forte gia validato (in particolare Lab L >= 208), il
-    # responso resta poco anche se gli ultimi frame oscillano verso buono.
-    sticky_poco_hits = len(sticky_poco_evidence)
-    sticky_poco_avg_confidence = (
-        sum(item["confidence"] for item in sticky_poco_evidence) / sticky_poco_hits
-        if sticky_poco_hits > 0
-        else 0.0
-    )
-    sticky_poco_lab_l_values = sorted(
-        item["lab_l"] for item in sticky_poco_evidence
-    )
-    sticky_poco_lab_l = (
-        float(sticky_poco_lab_l_values[sticky_poco_hits // 2])
-        if sticky_poco_lab_l_values
-        else 0.0
-    )
-    sticky_poco_max_lab_l = (
-        max(sticky_poco_lab_l_values)
-        if sticky_poco_lab_l_values
-        else 0.0
-    )
-    sticky_poco_has_strong_color = any(
-        item.get("v", 0.0) >= POCO_MIN_V
-        and item.get("lab_l", 0.0) >= POCO_FINAL_MIN_LAB_L
-        and item.get("s", 999.0) <= POCO_MAX_S
-        for item in sticky_poco_evidence
-    )
-
-    # Latch prudenziale: almeno due letture YOLO POCO, confidenza media
-    # sufficiente e almeno una lettura cromatica forte. Una volta raccolta
-    # questa evidenza, i frame finali BUONO non la cancellano alla deadline.
-    sticky_poco_confirmed = (
-        sticky_poco_hits >= POCO_COLOR_MIN_OBSERVATIONS
-        and sticky_poco_avg_confidence >= 0.50
-        and sticky_poco_has_strong_color
-    )
-
-    poco_strong_confirmation = (
-        (
-            poco_observations >= POCO_COLOR_MIN_OBSERVATIONS
-            and poco_v >= POCO_MIN_V
-            and poco_lab_l >= POCO_FINAL_MIN_LAB_L
-            and poco_s <= POCO_MAX_S
-        )
-        or sticky_poco_confirmed
-    )
-    if poco_strong_confirmation:
-        return {
-            "label": "poco",
-            "confidence": (
-                sticky_poco_avg_confidence
-                if sticky_poco_hits >= POCO_COLOR_MIN_OBSERVATIONS
-                else poco_avg_confidence
-            ),
-            "state": "FINALE",
-            "defect_share": defect_share,
-            "class_share": class_share,
-            "threshold": POCO_COLOR_SUPPORTED_THRESHOLD,
-            "color_support": "poco_forte",
-            "track_v": track_v,
-            "track_s": track_s,
-            "track_lab_l": (
-                sticky_poco_lab_l
-                if sticky_poco_hits >= POCO_COLOR_MIN_OBSERVATIONS
-                else poco_lab_l
-            ),
-            "shape_support": shape_support,
-            "shape_anomalies": shape_anomalies,
-            "track_circularity": track_circularity,
-            "track_solidity": track_solidity,
-            "track_aspect": track_aspect,
-            "track_extent": track_extent,
-            "strong_shape_override": strong_shape_override,
             "rotto_observations": rotto_observations,
             "rotto_avg_confidence": rotto_avg_confidence,
             "rotto_score_ratio": rotto_score_ratio,
@@ -1567,6 +1454,32 @@ def process_video(
                     verbose=False,
                 )[0]
 
+                detections = []
+                if result.boxes is not None:
+                    for box in result.boxes:
+                        x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().tolist())
+                        class_id = int(box.cls[0].cpu().item())
+                        confidence = float(box.conf[0].cpu().item())
+                        label = str(model.names[class_id])
+                        cx = int((x1 + x2) / 2)
+                        cy = int((y1 + y2) / 2)
+
+                        if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2):
+                            continue
+
+                        color_features = extract_color_features(frame, x1, y1, x2, y2)
+                        detections.append(
+                            {
+                                "x1": x1, "y1": y1, "x2": x2, "y2": y2,
+                                "cx": cx, "cy": cy,
+                                "label": label, "confidence": confidence,
+                                "color": color_features,
+                                "shape": extract_shape_features(frame, x1, y1, x2, y2),
+                            }
+                        )
+
+                # Overlay solo dopo l'estrazione dei descrittori: le linee della
+                # ROI e delle botole non devono contaminare HSV/Lab o la sagoma.
                 cv2.rectangle(
                     frame,
                     (roi_x1, roi_y1),
@@ -1575,7 +1488,6 @@ def process_video(
                     1,
                 )
 
-                # Suddivisione trasversale del nastro nelle botole fisiche.
                 gates = max(1, int(trapdoor_count))
                 for gate_idx in range(1, gates):
                     gate_y = roi_y1 + int((roi_y2 - roi_y1) * gate_idx / gates)
@@ -1603,30 +1515,6 @@ def process_video(
                     1,
                     cv2.LINE_AA,
                 )
-
-                detections = []
-                if result.boxes is not None:
-                    for box in result.boxes:
-                        x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().tolist())
-                        class_id = int(box.cls[0].cpu().item())
-                        confidence = float(box.conf[0].cpu().item())
-                        label = str(model.names[class_id])
-                        cx = int((x1 + x2) / 2)
-                        cy = int((y1 + y2) / 2)
-
-                        if not (roi_x1 <= cx <= roi_x2 and roi_y1 <= cy <= roi_y2):
-                            continue
-
-                        color_features = extract_color_features(frame, x1, y1, x2, y2)
-                        detections.append(
-                            {
-                                "x1": x1, "y1": y1, "x2": x2, "y2": y2,
-                                "cx": cx, "cy": cy,
-                                "label": label, "confidence": confidence,
-                                "color": color_features,
-                                "shape": extract_shape_features(frame, x1, y1, x2, y2),
-                            }
-                        )
 
                 # Tracking leggero per associare lo stesso tarallo tra frame consecutivi.
                 unmatched_track_ids = set(tracks.keys())
@@ -1702,7 +1590,6 @@ def process_video(
                             "area": max(1, (det["x2"] - det["x1"]) * (det["y2"] - det["y1"])),
                             "last_frame": frame_number,
                             "observations": deque(maxlen=TRACK_OBSERVATION_WINDOW),
-                            "sticky_poco_evidence": [],
                             "final_label": None,
                             "final_confidence": None,
                             "final_frame": None,
@@ -1746,22 +1633,6 @@ def process_video(
                     track["area"] = det_area
                     track["last_frame"] = frame_number
 
-                    # Memoria persistente solo per evidenza POCO forte: evita che
-                    # due rilevazioni valide vengano espulse dalla finestra mobile
-                    # se gli ultimi frame oscillano poi verso BUONO.
-                    if (
-                        track["final_label"] is None
-                        and det["label"] == "poco"
-                    ):
-                        track["sticky_poco_evidence"].append(
-                            {
-                                "confidence": float(det["confidence"]),
-                                "v": float(det["color"]["v"]),
-                                "s": float(det["color"]["s"]),
-                                "lab_l": float(det["color"]["lab_l"]),
-                            }
-                        )
-
                     # Conserva solo le osservazioni piu recenti prima della deadline,
                     # cosi la decisione ordinaria non viene contaminata da
                     # classificazioni lontane.
@@ -1783,10 +1654,7 @@ def process_video(
                     )
 
                     if track["final_label"] is None and crossed:
-                        verdict = calculate_final_verdict(
-                            list(track["observations"]),
-                            sticky_poco_evidence=track.get("sticky_poco_evidence", []),
-                        )
+                        verdict = calculate_final_verdict(list(track["observations"]))
                         final_label = str(verdict["label"])
                         final_conf = float(verdict["confidence"])
                         final_state = str(verdict["state"])
@@ -1994,10 +1862,7 @@ def process_video(
                             and moving_toward_deadline
                             and predicted_cross
                         ):
-                            verdict = calculate_final_verdict(
-                                list(track["observations"]),
-                                sticky_poco_evidence=track.get("sticky_poco_evidence", []),
-                            )
+                            verdict = calculate_final_verdict(list(track["observations"]))
                             track["final_label"] = str(verdict["label"])
                             track["final_confidence"] = float(verdict["confidence"])
                             track["final_frame"] = frame_number
