@@ -954,15 +954,20 @@ def calculate_final_verdict(
         if sticky_poco_lab_l_values
         else 0.0
     )
+    sticky_poco_has_strong_color = any(
+        item.get("v", 0.0) >= POCO_MIN_V
+        and item.get("lab_l", 0.0) >= POCO_FINAL_MIN_LAB_L
+        and item.get("s", 999.0) <= POCO_MAX_S
+        for item in sticky_poco_evidence
+    )
 
-    # Latch prudenziale: due o piu letture YOLO POCO abbastanza coerenti
-    # restano valide fino alla deadline se almeno una osservazione ha la
-    # luminosita forte gia validata (Lab L >= 208) e la mediana resta >=198.
+    # Latch prudenziale: almeno due letture YOLO POCO, confidenza media
+    # sufficiente e almeno una lettura cromatica forte. Una volta raccolta
+    # questa evidenza, i frame finali BUONO non la cancellano alla deadline.
     sticky_poco_confirmed = (
         sticky_poco_hits >= POCO_COLOR_MIN_OBSERVATIONS
-        and sticky_poco_avg_confidence >= 0.55
-        and sticky_poco_max_lab_l >= POCO_FINAL_MIN_LAB_L
-        and sticky_poco_lab_l >= POCO_MIN_LAB_L
+        and sticky_poco_avg_confidence >= 0.50
+        and sticky_poco_has_strong_color
     )
 
     poco_strong_confirmation = (
@@ -1199,6 +1204,7 @@ def process_video(
     frame_callback: Callable[[int, int, Any], None] | None = None,
     gate_callback: Callable[[list[int], str | None, int | None], None] | None = None,
     defect_callback: Callable[[str, int], None] | None = None,
+    final_callback: Callable[[str, int], None] | None = None,
     model_instance: Any | None = None,
     trapdoor_count: int = DEFAULT_TRAPDOOR_COUNT,
 ) -> Path:
@@ -1373,6 +1379,9 @@ def process_video(
                     ]
                 )
                 final_csv_file.flush()
+
+                if final_callback is not None:
+                    final_callback(str(track["final_label"]), int(track_id))
 
                 if track["final_label"] in DEFECT_CLASSES:
                     timestamp_s = (
@@ -1747,6 +1756,8 @@ def process_video(
                         track["sticky_poco_evidence"].append(
                             {
                                 "confidence": float(det["confidence"]),
+                                "v": float(det["color"]["v"]),
+                                "s": float(det["color"]["s"]),
                                 "lab_l": float(det["color"]["lab_l"]),
                             }
                         )
