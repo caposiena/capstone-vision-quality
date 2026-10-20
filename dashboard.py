@@ -473,7 +473,7 @@ with input_col:
     with pair2a:
         st.slider("DX", 0, 45, key="roi_right")
     with pair2b:
-        st.slider("BASSO", 0, 45, key="roi_bottom")
+        st.slider("BASSO", 0, 80, key="roi_bottom")
 
     pair3a, pair3b = st.columns(2)
     with pair3a:
