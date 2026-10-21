@@ -781,11 +781,7 @@ if start_clicked:
             progress = progress_area.progress(0, text="Analisi avviata")
 
             def update_progress(current_frame: int, total_frames: int) -> None:
-                if total_frames > 0 and (
-                    current_frame == 1
-                    or current_frame == total_frames
-                    or current_frame % 10 == 0
-                ):
+                if total_frames > 0:
                     progress.progress(
                         min(1.0, current_frame / total_frames),
                         text=f"YOLO + OpenCV · frame {current_frame}/{total_frames}",
@@ -811,28 +807,11 @@ if start_clicked:
                     live_counts["totale_scarti"] += 1
                     render_counters(live_counts)
 
-            last_gate_state = {"gates": None, "label": None, "track_id": None}
-
             def update_gate_panel(
                 active_gates: list[int],
                 active_label: str | None,
                 active_track_id: int | None,
             ) -> None:
-                gate_state = (
-                    tuple(active_gates),
-                    active_label,
-                    active_track_id,
-                )
-                if gate_state == (
-                    last_gate_state["gates"],
-                    last_gate_state["label"],
-                    last_gate_state["track_id"],
-                ):
-                    return
-
-                last_gate_state["gates"] = tuple(active_gates)
-                last_gate_state["label"] = active_label
-                last_gate_state["track_id"] = active_track_id
                 trapdoor_frame.image(
                     build_trapdoor_panel(
                         st.session_state.trapdoor_count,
