@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import csv
 import math
+import os
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, Callable
@@ -1011,6 +1012,7 @@ def process_video(
     final_callback: Callable[[str, int], None] | None = None,
     model_instance: Any | None = None,
     trapdoor_count: int = DEFAULT_TRAPDOOR_COUNT,
+    save_detection_csv: bool = True,
 ) -> Path:
     """Analizza il video e salva su CSV le coordinate delle detection."""
 
@@ -1027,6 +1029,7 @@ def process_video(
 
     suffix = "_detections_test.csv" if test_mode else "_difetti.csv"
     output_path = video_path.with_name(f"{video_path.stem}{suffix}")
+    detection_target = output_path if save_detection_csv else Path(os.devnull)
     final_suffix = "_finali_test.csv" if test_mode else "_finali.csv"
     final_output_path = video_path.with_name(f"{video_path.stem}{final_suffix}")
     defect_suffix = "_scarti_test.csv" if test_mode else "_scarti.csv"
@@ -1072,7 +1075,7 @@ def process_video(
 
     try:
         with (
-            output_path.open(
+            detection_target.open(
                 mode="w",
                 newline="",
                 encoding="utf-8",
@@ -1916,8 +1919,11 @@ def process_video(
         if show_window:
             cv2.destroyAllWindows()
 
-    print(f"Righe salvate nel CSV detection: {saved_rows}")
-    print(f"File detection: {output_path}")
+    if save_detection_csv:
+        print(f"Righe salvate nel CSV detection: {saved_rows}")
+        print(f"File detection: {output_path}")
+    else:
+        print("CSV detection frame-by-frame disattivato.")
     print(f"Responsi finali unici: {len(finalized_track_ids)}")
     print(f"File finali: {final_output_path}")
     print(f"Eventi scarto: {defect_output_path}")
