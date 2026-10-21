@@ -19,3 +19,8 @@ Il video 1 è stato usato come prova di robustezza perché presenta uno zoom div
 Il risultato del video 1 mostra che la componente geometrica è sensibile alla distanza di ripresa e alle condizioni di luce. Su una linea reale sono quindi importanti camera fissa, distanza costante, illuminazione controllata e prodotto disposto su singolo strato.
 
 Dopo il confronto sui tre video le soglie della baseline V1 sono state congelate.
+
+
+**Prestazioni di elaborazione**
+
+La velocità dipende dalla macchina su cui viene eseguito il modello. I test sono stati svolti su un PC CPU-only non recente e l'elaborazione dei video può quindi richiedere più tempo della loro durata reale. Questo dato non viene usato come misura della capacità industriale del sistema. Nella dashboard gli aggiornamenti grafici sono diradati per ridurre il carico dell'interfaccia, mentre l'analisi continua a essere eseguita sui frame previsti dalla pipeline. La verifica del tempo reale resta legata all'hardware destinato all'inferenza sulla linea.
