@@ -30,7 +30,7 @@ Il flusso è questo:
 
 video → ROI → YOLO → tracking → colore/geometria → deadline → responso finale → coordinate scarto → database/report
 
-Per ogni sessione vengono prodotti un CSV con le detection frame per frame, un CSV con un solo record per ogni track finalizzato e un CSV dedicato agli scarti. Quest'ultimo contiene coordinate, bounding box, timestamp e botole associate.
+Durante l'uso normale la dashboard conserva il report di lotto e gli eventi di scarto necessari al controllo. Il CSV dettagliato delle detection frame per frame resta disponibile come strumento diagnostico, ma non viene generato nella modalità operativa a basso utilizzo di spazio. Gli eventi di scarto contengono coordinate, bounding box, timestamp e botole associate.
 
 La dashboard registra anche data di produzione, prodotto e lotto e aggiorna il report riepilogativo report_lotti.csv.
 
@@ -59,5 +59,7 @@ Il pannello laterale mostra le botole che il software assocerebbe allo scarto. L
 **Limiti attuali**
 
 La validazione è stata fatta su video registrati. La videocamera USB è già gestita per la fase di calibrazione, ma l'elaborazione continua con hardware reale non è stata ancora validata.
+
+La velocità di elaborazione dipende dall'hardware utilizzato. I test del Capstone sono stati eseguiti su un PC CPU-only non recente, sul quale l'analisi può risultare più lenta della durata reale del video. La dashboard riduce la frequenza degli aggiornamenti grafici senza saltare frame nell'analisi; per un impiego in linea è prevista una piattaforma di inferenza più adatta al tempo reale.
 
 Encoder, attuatore e collegamento al gestionale restano fuori dal perimetro della versione consegnata.
