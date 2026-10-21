@@ -847,9 +847,6 @@ if start_clicked:
                 )
 
             def update_live_frame(current_frame: int, total_frames: int, frame) -> None:
-                if current_frame != 1 and current_frame != total_frames and current_frame % 4 != 0:
-                    return
-
                 cropped = crop_to_roi(
                     frame,
                     st.session_state.roi_left,
