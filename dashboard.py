@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -207,6 +208,7 @@ def prepare_uploaded_video(uploaded_file) -> Path:
     ):
         return Path(st.session_state.prepared_video_path)
 
+    cleanup_prepared_video()
     work_dir = Path(tempfile.mkdtemp(prefix="visiontar_input_"))
     suffix = Path(uploaded_file.name).suffix or ".mp4"
     input_path = work_dir / f"input{suffix}"
@@ -215,6 +217,18 @@ def prepare_uploaded_video(uploaded_file) -> Path:
     st.session_state.prepared_video_signature = signature
     st.session_state.prepared_video_path = str(input_path)
     return input_path
+
+
+def cleanup_prepared_video() -> None:
+    prepared = st.session_state.get("prepared_video_path")
+    if prepared:
+        try:
+            work_dir = Path(prepared).parent
+            if work_dir.exists() and work_dir.name.startswith("visiontar_input_"):
+                shutil.rmtree(work_dir, ignore_errors=True)
+        finally:
+            st.session_state.pop("prepared_video_path", None)
+            st.session_state.pop("prepared_video_signature", None)
 
 
 def safe_name(value: str) -> str:
@@ -854,7 +868,7 @@ if start_clicked:
                 detections_path = process_video(
                     video_path=run_input,
                     model_path=DEFAULT_MODEL_PATH,
-                    test_mode=True,
+                    test_mode=False,
                     roi_left=st.session_state.roi_left / 100.0,
                     roi_right=st.session_state.roi_right / 100.0,
                     roi_top=st.session_state.roi_top / 100.0,
@@ -869,13 +883,14 @@ if start_clicked:
                     final_callback=update_live_final,
                     model_instance=model,
                     trapdoor_count=st.session_state.trapdoor_count,
+                    save_detection_csv=False,
                 )
 
                 scarti_path = run_input.with_name(
-                    f"{run_input.stem}_scarti_test.csv"
+                    f"{run_input.stem}_scarti.csv"
                 )
                 finali_path = run_input.with_name(
-                    f"{run_input.stem}_finali_test.csv"
+                    f"{run_input.stem}_finali.csv"
                 )
 
                 final_by_track: dict[int, dict[str, str]] = {}
@@ -963,11 +978,19 @@ if start_clicked:
                 )
                 st.session_state.display_mode = "processed"
                 progress.progress(1.0, text="Analisi completata")
+
+                for artifact in (finali_path, scarti_path):
+                    try:
+                        artifact.unlink(missing_ok=True)
+                    except OSError:
+                        pass
+                cleanup_prepared_video()
                 st.rerun()
 
             except Exception as exc:
                 progress_area.empty()
                 st.session_state.display_mode = "calibration"
+                cleanup_prepared_video()
                 st.error(f"Errore durante l'analisi: {exc}")
 
 st.markdown(
