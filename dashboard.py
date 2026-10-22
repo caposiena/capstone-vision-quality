@@ -849,8 +849,6 @@ with right_col:
         )
 
 
-
-
 if start_clicked:
     if not DEFAULT_MODEL_PATH.exists():
         st.error(f"Modello YOLO non trovato: {DEFAULT_MODEL_PATH}")
@@ -955,7 +953,7 @@ if start_clicked:
             run_input = Path(input_path)
 
             try:
-                detections_path = process_video(
+                process_video(
                     video_path=run_input,
                     model_path=DEFAULT_MODEL_PATH,
                     test_mode=False,
