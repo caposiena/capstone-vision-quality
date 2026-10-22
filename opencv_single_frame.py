@@ -63,6 +63,7 @@ def create_trackbars() -> None:
     cv2.createTrackbar("AREA GROSSO /100", WINDOW_SETTINGS, DEFAULT_BLOB_AREA // 100, 400, noop)
     cv2.createTrackbar("MOSTRA MASCHERA", WINDOW_SETTINGS, 1, 1, noop)
     cv2.createTrackbar("MOSTRA DEBUG", WINDOW_SETTINGS, 1, 1, noop)
+    cv2.createTrackbar("VELOCITA %", WINDOW_SETTINGS, 100, 300, noop)
 
 
 def get_settings() -> dict[str, float]:
@@ -88,6 +89,10 @@ def get_settings() -> dict[str, float]:
         ),
         "show_mask": cv2.getTrackbarPos("MOSTRA MASCHERA", WINDOW_SETTINGS) == 1,
         "show_debug": cv2.getTrackbarPos("MOSTRA DEBUG", WINDOW_SETTINGS) == 1,
+        "speed_pct": max(
+            10,
+            cv2.getTrackbarPos("VELOCITA %", WINDOW_SETTINGS),
+        ),
     }
 
 
@@ -339,7 +344,7 @@ def main() -> None:
                 live = frame.copy()
                 cv2.putText(
                     live,
-                    "LIVE - premi T per trigger",
+                    "LIVE %.0f%% - premi T per trigger" % settings["speed_pct"],
                     (15, 30),
                     cv2.FONT_HERSHEY_SIMPLEX,
                     0.72,
@@ -363,7 +368,9 @@ def main() -> None:
                     mask_visible = False
 
             elapsed = time.perf_counter() - loop_started
-            delay_ms = max(1, int((frame_period - elapsed) * 1000))
+            speed_factor = settings["speed_pct"] / 100.0
+            target_period = frame_period / speed_factor
+            delay_ms = max(1, int((target_period - elapsed) * 1000))
             key = cv2.waitKey(delay_ms) & 0xFF
 
             if key in (27, ord("q")):
