@@ -423,10 +423,36 @@ st.markdown(
         border-radius: 6px !important;
         background: var(--vt-ink) !important;
         border-color: var(--vt-ink) !important;
+        color: #FFFFFF !important;
+    }
+    button[kind="primary"] p,
+    button[kind="primary"] span,
+    button[kind="primary"] div {
+        color: #FFFFFF !important;
     }
     button[kind="primary"]:hover {
         background: #22344F !important;
         border-color: #22344F !important;
+        color: #FFFFFF !important;
+    }
+    button[kind="primary"]:disabled {
+        background: #AEB8C6 !important;
+        border-color: #AEB8C6 !important;
+        color: #FFFFFF !important;
+        opacity: 1 !important;
+    }
+    button[kind="primary"]:disabled p,
+    button[kind="primary"]:disabled span,
+    button[kind="primary"]:disabled div {
+        color: #FFFFFF !important;
+    }
+
+    div[data-testid="stColumn"]:first-of-type,
+    div[data-testid="stColumn"]:last-of-type {
+        background: var(--vt-panel);
+        border: 1px solid var(--vt-line);
+        border-radius: 8px;
+        padding: .48rem .58rem;
     }
     </style>
     """,
