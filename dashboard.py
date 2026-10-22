@@ -311,33 +311,53 @@ if "camera_preview_frame" not in st.session_state:
 st.markdown(
     """
     <style>
+    :root {
+        --vt-ink: #142033;
+        --vt-muted: #687386;
+        --vt-line: #D7DEE8;
+        --vt-panel: #F6F8FB;
+        --vt-accent: #D97706;
+        --vt-accent-soft: #FFF5E8;
+    }
     .block-container {
-        padding-top: 0.25rem;
-        padding-bottom: 0.25rem;
+        padding-top: 0.20rem;
+        padding-bottom: 0.30rem;
         max-width: 1480px;
     }
     h1, h2, h3, h4 { margin-top: 0.15rem !important; margin-bottom: 0.25rem !important; }
     div[data-testid="stVerticalBlock"] { gap: 0.30rem; }
     div[data-testid="stMetric"] {
-        border: 1px solid rgba(128,128,128,.22);
-        border-radius: 10px;
-        padding: 0.35rem 0.55rem;
-        background: rgba(128,128,128,.04);
+        border: 1px solid var(--vt-line);
+        border-left: 4px solid var(--vt-accent);
+        border-radius: 6px;
+        padding: 0.38rem 0.58rem;
+        background: #FFFFFF;
+        box-shadow: 0 1px 2px rgba(20,32,51,.05);
     }
-    div[data-testid="stMetricValue"] { font-size: 1.55rem; }
+    div[data-testid="stMetricLabel"] {
+        color: var(--vt-muted);
+        font-size: .74rem;
+        text-transform: uppercase;
+        letter-spacing: .055em;
+    }
+    div[data-testid="stMetricValue"] {
+        font-size: 1.50rem;
+        font-weight: 700;
+        color: var(--vt-ink);
+    }
     div[data-testid="stFileUploader"] { margin-bottom: -0.35rem; }
     div[data-testid="stFileUploaderDropzone"] {
         min-height: 2.4rem;
         padding: 0.25rem 0.45rem;
+        border-radius: 6px;
+        border-color: var(--vt-line);
+        background: var(--vt-panel);
     }
-    div[data-testid="stFileUploaderDropzone"] section {
-        padding: 0 !important;
-    }
-    div[data-testid="stFileUploaderDropzoneInstructions"] {
-        display: none;
-    }
+    div[data-testid="stFileUploaderDropzone"] section { padding: 0 !important; }
+    div[data-testid="stFileUploaderDropzoneInstructions"] { display: none; }
     div[data-baseweb="select"] > div {
         min-height: 2.15rem;
+        border-radius: 6px;
     }
     div[data-testid="stNumberInput"] input {
         min-height: 2.15rem;
@@ -350,39 +370,83 @@ st.markdown(
         margin-top: -0.15rem;
         margin-bottom: -0.25rem;
     }
+    .visiontar-brand {
+        border-bottom: 1px solid var(--vt-line);
+        padding: .12rem 0 .48rem 0;
+        margin-bottom: .18rem;
+    }
+    .visiontar-kicker {
+        color: var(--vt-accent);
+        font-size: .68rem;
+        font-weight: 800;
+        letter-spacing: .14em;
+        text-transform: uppercase;
+        margin-bottom: .08rem;
+    }
     .visiontar-header {
-        font-size: 1.55rem;
-        font-weight: 700;
-        letter-spacing: .01em;
+        color: var(--vt-ink);
+        font-size: 1.62rem;
+        font-weight: 800;
+        letter-spacing: -.02em;
+        line-height: 1.05;
         margin: 0;
     }
     .visiontar-sub {
-        opacity: .72;
-        font-size: .82rem;
-        margin-top: -0.2rem;
+        color: var(--vt-muted);
+        font-size: .80rem;
+        margin-top: .12rem;
+    }
+    .section-label {
+        color: var(--vt-ink);
+        font-size: .78rem;
+        font-weight: 800;
+        letter-spacing: .085em;
+        text-transform: uppercase;
+        border-bottom: 1px solid var(--vt-line);
+        padding-bottom: .22rem;
+        margin: .08rem 0 .30rem 0;
     }
     .machine-note {
-        border: 1px solid rgba(128,128,128,.22);
-        border-radius: 9px;
-        padding: .42rem .6rem;
-        font-size: .80rem;
-        line-height: 1.25rem;
+        border: 1px solid var(--vt-line);
+        border-left: 4px solid var(--vt-accent);
+        border-radius: 6px;
+        padding: .42rem .62rem;
+        font-size: .79rem;
+        line-height: 1.22rem;
+        background: var(--vt-panel);
+        color: var(--vt-ink);
     }
-    button[kind="primary"] { min-height: 2.55rem; font-weight: 700; }
+    button[kind="primary"] {
+        min-height: 2.55rem;
+        font-weight: 800;
+        letter-spacing: .035em;
+        border-radius: 6px !important;
+        background: var(--vt-ink) !important;
+        border-color: var(--vt-ink) !important;
+    }
+    button[kind="primary"]:hover {
+        background: #22344F !important;
+        border-color: #22344F !important;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-header_left, header_right = st.columns([0.72, 0.28])
+header_left, header_right = st.columns([0.76, 0.24])
 with header_left:
-    st.markdown('<div class="visiontar-header">visionTar</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="visiontar-sub">Controllo qualità visivo · YOLO + OpenCV · simulazione scarto</div>',
+        """
+        <div class="visiontar-brand">
+            <div class="visiontar-kicker">Vision QA · Line Inspection</div>
+            <div class="visiontar-header">visionTar</div>
+            <div class="visiontar-sub">Controllo qualità visivo · rilevazione, tracking e simulazione scarto</div>
+        </div>
+        """,
         unsafe_allow_html=True,
     )
 with header_right:
-    st.caption("Interfaccia produzione · target 15\"")
+    st.caption("PROTOTIPO CAPSTONE · interfaccia linea 15\"")
 
 meta1, meta2, meta3 = st.columns([0.22, 0.48, 0.30])
 with meta1:
@@ -409,7 +473,7 @@ profile = PROFILES[st.session_state.profile_key]
 input_col, vision_col, right_col = st.columns([0.21, 0.47, 0.32], gap="small")
 
 with input_col:
-    st.markdown("#### Input")
+    st.markdown('<div class="section-label">Configurazione</div>', unsafe_allow_html=True)
 
     source_mode = st.selectbox(
         "Sorgente",
@@ -527,7 +591,7 @@ with input_col:
     )
 
 with vision_col:
-    st.markdown("#### Visione linea")
+    st.markdown('<div class="section-label">Visione linea</div>', unsafe_allow_html=True)
 
     frame_data = None
     if source_mode == "Video registrato" and uploaded is not None:
@@ -613,7 +677,7 @@ with vision_col:
         )
 
 with right_col:
-    st.markdown("#### Sessione")
+    st.markdown('<div class="section-label">Controllo sessione</div>', unsafe_allow_html=True)
 
     can_start = bool(
         source_mode == "Video registrato"
@@ -633,7 +697,7 @@ with right_col:
     if source_mode == "Videocamera USB":
         st.caption("Live camera predisposto; validazione Capstone eseguita su video registrato.")
 
-    st.markdown("#### Scarti")
+    st.markdown('<div class="section-label">Esito qualità</div>', unsafe_allow_html=True)
     summary_session_id = st.session_state.get("last_closed_session_id")
     if summary_session_id is not None:
         summary = get_session_summary(summary_session_id)
@@ -683,7 +747,7 @@ with right_col:
     cumulative_rows_ui = build_lot_report_rows()
     if cumulative_rows_ui:
         lot_codes_ui = list(dict.fromkeys(row["lot_code"] for row in cumulative_rows_ui))
-        st.markdown("#### Esportazione")
+        st.markdown('<div class="section-label">Esportazione</div>', unsafe_allow_html=True)
         export_mode_ui = st.selectbox(
             "Modalità export",
             ["Seleziona lotto", "Lotto da - a", "Esporta tutti"],
