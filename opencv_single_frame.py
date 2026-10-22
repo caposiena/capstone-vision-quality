@@ -23,6 +23,9 @@ DEFAULT_MIN_AREA = 500
 DEFAULT_MAX_AREA = 14000
 DEFAULT_MIN_SAT = 25
 DEFAULT_BLUE_MARGIN = 10
+DEFAULT_BLUR = 3
+DEFAULT_MORPH = 3
+DEFAULT_MIN_COMPONENT = 80
 DEFAULT_DARK_V = 150
 DEFAULT_LIGHT_V = 220
 DEFAULT_BLOB_AREA = 8000
@@ -55,6 +58,9 @@ def create_trackbars() -> None:
     cv2.createTrackbar("MAX AREA /100", WINDOW_SETTINGS, DEFAULT_MAX_AREA // 100, 400, noop)
     cv2.createTrackbar("SAT MIN", WINDOW_SETTINGS, DEFAULT_MIN_SAT, 255, noop)
     cv2.createTrackbar("BLUE MARGIN", WINDOW_SETTINGS, DEFAULT_BLUE_MARGIN, 80, noop)
+    cv2.createTrackbar("BLUR", WINDOW_SETTINGS, DEFAULT_BLUR, 15, noop)
+    cv2.createTrackbar("MORPH", WINDOW_SETTINGS, DEFAULT_MORPH, 15, noop)
+    cv2.createTrackbar("MIN COMPONENT", WINDOW_SETTINGS, DEFAULT_MIN_COMPONENT, 1000, noop)
 
     cv2.createTrackbar("V MIN SCURO", WINDOW_SETTINGS, DEFAULT_DARK_V, 255, noop)
     cv2.createTrackbar("V MAX CHIARO", WINDOW_SETTINGS, DEFAULT_LIGHT_V, 255, noop)
@@ -79,6 +85,12 @@ def get_settings() -> dict[str, float]:
         ),
         "min_sat": cv2.getTrackbarPos("SAT MIN", WINDOW_SETTINGS),
         "blue_margin": cv2.getTrackbarPos("BLUE MARGIN", WINDOW_SETTINGS),
+        "blur": max(1, cv2.getTrackbarPos("BLUR", WINDOW_SETTINGS) | 1),
+        "morph": max(1, cv2.getTrackbarPos("MORPH", WINDOW_SETTINGS) | 1),
+        "min_component": max(
+            1,
+            cv2.getTrackbarPos("MIN COMPONENT", WINDOW_SETTINGS),
+        ),
         "dark_v": cv2.getTrackbarPos("V MIN SCURO", WINDOW_SETTINGS),
         "light_v": cv2.getTrackbarPos("V MAX CHIARO", WINDOW_SETTINGS),
         "rotto_solidity": cv2.getTrackbarPos("ROTTO SOL %", WINDOW_SETTINGS) / 100.0,
@@ -96,24 +108,57 @@ def get_settings() -> dict[str, float]:
     }
 
 
-def build_mask(roi: np.ndarray, min_sat: int, blue_margin: int) -> np.ndarray:
-    # Il fondo e blu: selezioniamo i pixel che NON hanno dominante blu.
-    b, g, r = cv2.split(roi)
+def build_mask(
+    roi: np.ndarray,
+    min_sat: int,
+    blue_margin: int,
+    blur_size: int = 3,
+    morph_size: int = 3,
+    min_component: int = 80,
+) -> np.ndarray:
+    # SILHOUETTE-FIRST:
+    # 1) riduce il rumore;
+    # 2) elimina il fondo blu con una regola cromatica semplice;
+    # 3) produce una maschera 1-bit;
+    # 4) elimina piccoli componenti prima dei contorni.
+    if blur_size > 1:
+        roi_work = cv2.GaussianBlur(roi, (blur_size, blur_size), 0)
+    else:
+        roi_work = roi
+
+    b, g, r = cv2.split(roi_work)
     non_blue = (
         (b.astype(np.int16) + blue_margin < g.astype(np.int16))
         | (b.astype(np.int16) + blue_margin < r.astype(np.int16))
     )
 
-    hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
+    hsv = cv2.cvtColor(roi_work, cv2.COLOR_BGR2HSV)
     sat_ok = hsv[:, :, 1] >= min_sat
-
     mask = ((non_blue & sat_ok).astype(np.uint8) * 255)
 
-    kernel3 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    kernel5 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel3)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel5)
-    return mask
+    if morph_size > 1:
+        kernel = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE,
+            (morph_size, morph_size),
+        )
+        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+
+    # Rimuove subito il rumore: dopo questo punto lavoriamo solo con
+    # silhouette candidate, non piu con tutti i pixel del frame.
+    count, labels, stats, _centroids = cv2.connectedComponentsWithStats(
+        mask,
+        connectivity=8,
+    )
+    cleaned = np.zeros_like(mask)
+
+    for label_id in range(1, count):
+        area = int(stats[label_id, cv2.CC_STAT_AREA])
+        if area >= min_component:
+            cleaned[labels == label_id] = 255
+
+    return cleaned
+
 
 
 def contour_features(
@@ -217,6 +262,9 @@ def process_frame(
         roi,
         int(settings["min_sat"]),
         int(settings["blue_margin"]),
+        int(settings["blur"]),
+        int(settings["morph"]),
+        int(settings["min_component"]),
     )
 
     contours, _ = cv2.findContours(
@@ -251,13 +299,14 @@ def process_frame(
         if settings["show_debug"]:
             cv2.putText(
                 output,
-                "%s | A=%.0f | V=%.0f | circ=%.2f | sol=%.2f"
+                "%s | A=%.0f | V=%.0f | C=%.2f | S=%.2f | E=%.2f"
                 % (
                     label,
                     float(item["area"]),
                     float(item["hsv_v"]),
                     float(item["circularity"]),
                     float(item["solidity"]),
+                    float(item["extent"]),
                 ),
                 (bx1, max(18, by1 - 6)),
                 cv2.FONT_HERSHEY_SIMPLEX,
