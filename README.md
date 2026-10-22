@@ -60,6 +60,6 @@ Il pannello laterale mostra le botole che il software assocerebbe allo scarto. L
 
 La validazione è stata fatta su video registrati. La videocamera USB è già gestita per la fase di calibrazione, ma l'elaborazione continua con hardware reale non è stata ancora validata.
 
-La velocità di elaborazione dipende dall'hardware utilizzato. I test del Capstone sono stati eseguiti su un PC CPU-only non recente, sul quale l'analisi può risultare più lenta della durata reale del video. La dashboard riduce la frequenza degli aggiornamenti grafici senza saltare frame nell'analisi; per un impiego in linea è prevista una piattaforma di inferenza più adatta al tempo reale.
+La velocità di elaborazione dipende dall'hardware utilizzato. I test del Capstone sono stati eseguiti su un PC CPU-only non recente, sul quale l'analisi può risultare più lenta della durata reale del video. La dashboard visualizza l'elaborazione mentre il modello analizza i frame; per un impiego in linea è prevista una piattaforma di inferenza più adatta al tempo reale.
 
 Encoder, attuatore e collegamento al gestionale restano fuori dal perimetro della versione consegnata.
