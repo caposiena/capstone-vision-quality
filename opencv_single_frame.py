@@ -61,6 +61,8 @@ def create_trackbars() -> None:
     cv2.createTrackbar("ROTTO SOL %", WINDOW_SETTINGS, DEFAULT_ROTTO_SOLIDITY, 100, noop)
     cv2.createTrackbar("ROTTO CIRC %", WINDOW_SETTINGS, DEFAULT_ROTTO_CIRCULARITY, 100, noop)
     cv2.createTrackbar("BLOB AREA x100", WINDOW_SETTINGS, int(DEFAULT_BLOB_AREA_FACTOR * 100), 300, noop)
+    cv2.createTrackbar("MOSTRA MASCHERA", WINDOW_SETTINGS, 1, 1, noop)
+    cv2.createTrackbar("MOSTRA DEBUG", WINDOW_SETTINGS, 1, 1, noop)
 
 
 def get_settings() -> dict[str, float]:
@@ -84,6 +86,8 @@ def get_settings() -> dict[str, float]:
             1.05,
             cv2.getTrackbarPos("BLOB AREA x100", WINDOW_SETTINGS) / 100.0,
         ),
+        "show_mask": cv2.getTrackbarPos("MOSTRA MASCHERA", WINDOW_SETTINGS) == 1,
+        "show_debug": cv2.getTrackbarPos("MOSTRA DEBUG", WINDOW_SETTINGS) == 1,
     }
 
 
@@ -233,22 +237,23 @@ def process_frame(
         color = CLASS_COLORS[label]
 
         cv2.rectangle(output, (bx1, by1), (bx2, by2), color, 2)
-        cv2.putText(
-            output,
-            "%s | L=%.0f | circ=%.2f | sol=%.2f"
-            % (
-                label,
-                float(item["lab_l"]),
-                float(item["circularity"]),
-                float(item["solidity"]),
-            ),
-            (bx1, max(18, by1 - 6)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.47,
-            color,
-            1,
-            cv2.LINE_AA,
-        )
+        if settings["show_debug"]:
+            cv2.putText(
+                output,
+                "%s | L=%.0f | circ=%.2f | sol=%.2f"
+                % (
+                    label,
+                    float(item["lab_l"]),
+                    float(item["circularity"]),
+                    float(item["solidity"]),
+                ),
+                (bx1, max(18, by1 - 6)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.47,
+                color,
+                1,
+                cv2.LINE_AA,
+            )
 
     total = sum(counts.values())
     cv2.putText(
@@ -292,14 +297,16 @@ def main() -> None:
     frame_period = 1.0 / fps
 
     cv2.namedWindow(WINDOW_VIDEO, cv2.WINDOW_NORMAL)
-    cv2.namedWindow(WINDOW_MASK, cv2.WINDOW_NORMAL)
     create_trackbars()
 
     print("Video:", video_path)
     print("FPS sorgente:", fps)
     print("Pipeline: OpenCV puro | singolo frame | nessun YOLO | nessun tracking")
+    print("Target test: elaborazione >= FPS sorgente senza rallentamenti")
 
     paused = False
+    fps_ema = 0.0
+    mask_visible = False
 
     try:
         while True:
@@ -313,8 +320,32 @@ def main() -> None:
                 settings = get_settings()
                 output, mask, _counts = process_frame(frame, settings)
 
+                processing_elapsed = max(time.perf_counter() - started, 1e-6)
+                current_fps = 1.0 / processing_elapsed
+                fps_ema = current_fps if fps_ema == 0.0 else (0.90 * fps_ema + 0.10 * current_fps)
+
+                cv2.putText(
+                    output,
+                    "Processing FPS: %.1f | Source FPS: %.1f"
+                    % (fps_ema, fps),
+                    (15, 58),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.62,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+
                 cv2.imshow(WINDOW_VIDEO, output)
-                cv2.imshow(WINDOW_MASK, mask)
+
+                if settings["show_mask"]:
+                    if not mask_visible:
+                        cv2.namedWindow(WINDOW_MASK, cv2.WINDOW_NORMAL)
+                        mask_visible = True
+                    cv2.imshow(WINDOW_MASK, mask)
+                elif mask_visible:
+                    cv2.destroyWindow(WINDOW_MASK)
+                    mask_visible = False
 
             elapsed = time.perf_counter() - started
             delay_ms = max(1, int((frame_period - elapsed) * 1000))
