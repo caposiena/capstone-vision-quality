@@ -3,7 +3,10 @@ __pycache__/
 *.pyc
 
 # Modelli scaricati/addestrati
+# Temporaneamente consentiamo il modello operativo V2 nella cartella models/.
+# Gli altri pesi restano esclusi.
 *.pt
+!models/best.pt
 
 # Dataset e output di training locali
 dataset/
