@@ -80,3 +80,34 @@ La prova e positiva solo se:
 - le soglie restano ragionevolmente stabili lungo il video.
 
 Questo branch e sperimentale e non modifica il flusso canonico YOLO del `main`.
+
+
+## Avvio rapido Windows
+
+Dopo aver selezionato il branch:
+
+```powershell
+git checkout opencv-single-frame-pc
+git pull
+```
+
+puoi avviare anche con:
+
+```powershell
+run_opencv_single_frame.bat "C:\percorso\video.mp4"
+```
+
+## Benchmark realtime
+
+La finestra principale mostra:
+
+- `Processing FPS`: velocita reale della pipeline OpenCV;
+- `Source FPS`: FPS originali del video.
+
+Per considerare la pipeline adatta al realtime, `Processing FPS` dovrebbe restare almeno pari agli FPS sorgente.
+
+La maschera puo essere disattivata dal pannello settaggi con `MOSTRA MASCHERA = 0` per misurare il percorso minimo.
+
+Il testo tecnico su ogni bounding box puo essere disattivato con `MOSTRA DEBUG = 0`.
+
+Queste due opzioni servono a separare il costo dell'analisi dal costo di visualizzazione.
