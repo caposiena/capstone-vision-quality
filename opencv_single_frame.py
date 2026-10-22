@@ -23,9 +23,9 @@ DEFAULT_MIN_AREA = 500
 DEFAULT_MAX_AREA = 14000
 DEFAULT_MIN_SAT = 25
 DEFAULT_BLUE_MARGIN = 10
-DEFAULT_DARK_L = 145
-DEFAULT_LIGHT_L = 205
-DEFAULT_BLOB_AREA_FACTOR = 1.65
+DEFAULT_DARK_V = 150
+DEFAULT_LIGHT_V = 220
+DEFAULT_BLOB_AREA = 8000
 DEFAULT_ROTTO_SOLIDITY = 82
 DEFAULT_ROTTO_CIRCULARITY = 55
 
@@ -56,11 +56,11 @@ def create_trackbars() -> None:
     cv2.createTrackbar("SAT MIN", WINDOW_SETTINGS, DEFAULT_MIN_SAT, 255, noop)
     cv2.createTrackbar("BLUE MARGIN", WINDOW_SETTINGS, DEFAULT_BLUE_MARGIN, 80, noop)
 
-    cv2.createTrackbar("COTTO LabL <", WINDOW_SETTINGS, DEFAULT_DARK_L, 255, noop)
-    cv2.createTrackbar("POCO LabL >", WINDOW_SETTINGS, DEFAULT_LIGHT_L, 255, noop)
+    cv2.createTrackbar("V MIN SCURO", WINDOW_SETTINGS, DEFAULT_DARK_V, 255, noop)
+    cv2.createTrackbar("V MAX CHIARO", WINDOW_SETTINGS, DEFAULT_LIGHT_V, 255, noop)
     cv2.createTrackbar("ROTTO SOL %", WINDOW_SETTINGS, DEFAULT_ROTTO_SOLIDITY, 100, noop)
     cv2.createTrackbar("ROTTO CIRC %", WINDOW_SETTINGS, DEFAULT_ROTTO_CIRCULARITY, 100, noop)
-    cv2.createTrackbar("BLOB AREA x100", WINDOW_SETTINGS, int(DEFAULT_BLOB_AREA_FACTOR * 100), 300, noop)
+    cv2.createTrackbar("AREA GROSSO /100", WINDOW_SETTINGS, DEFAULT_BLOB_AREA // 100, 400, noop)
     cv2.createTrackbar("MOSTRA MASCHERA", WINDOW_SETTINGS, 1, 1, noop)
     cv2.createTrackbar("MOSTRA DEBUG", WINDOW_SETTINGS, 1, 1, noop)
 
@@ -78,13 +78,13 @@ def get_settings() -> dict[str, float]:
         ),
         "min_sat": cv2.getTrackbarPos("SAT MIN", WINDOW_SETTINGS),
         "blue_margin": cv2.getTrackbarPos("BLUE MARGIN", WINDOW_SETTINGS),
-        "dark_l": cv2.getTrackbarPos("COTTO LabL <", WINDOW_SETTINGS),
-        "light_l": cv2.getTrackbarPos("POCO LabL >", WINDOW_SETTINGS),
+        "dark_v": cv2.getTrackbarPos("V MIN SCURO", WINDOW_SETTINGS),
+        "light_v": cv2.getTrackbarPos("V MAX CHIARO", WINDOW_SETTINGS),
         "rotto_solidity": cv2.getTrackbarPos("ROTTO SOL %", WINDOW_SETTINGS) / 100.0,
         "rotto_circularity": cv2.getTrackbarPos("ROTTO CIRC %", WINDOW_SETTINGS) / 100.0,
-        "blob_area_factor": max(
-            1.05,
-            cv2.getTrackbarPos("BLOB AREA x100", WINDOW_SETTINGS) / 100.0,
+        "blob_area": max(
+            100.0,
+            float(cv2.getTrackbarPos("AREA GROSSO /100", WINDOW_SETTINGS) * 100),
         ),
         "show_mask": cv2.getTrackbarPos("MOSTRA MASCHERA", WINDOW_SETTINGS) == 1,
         "show_debug": cv2.getTrackbarPos("MOSTRA DEBUG", WINDOW_SETTINGS) == 1,
@@ -146,6 +146,10 @@ def contour_features(
     valid_l = lab[:, :, 0][local_mask > 0]
     lab_l = float(np.median(valid_l)) if valid_l.size else 0.0
 
+    hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+    valid_v = hsv[:, :, 2][local_mask > 0]
+    hsv_v = float(np.median(valid_v)) if valid_v.size else 0.0
+
     return {
         "bbox": (fx1, fy1, fx2, fy2),
         "area": area,
@@ -154,6 +158,7 @@ def contour_features(
         "extent": extent,
         "aspect": aspect,
         "lab_l": lab_l,
+        "hsv_v": hsv_v,
     }
 
 
@@ -166,6 +171,7 @@ def classify(
     circularity = float(features["circularity"])
     solidity = float(features["solidity"])
     lab_l = float(features["lab_l"])
+    hsv_v = float(features["hsv_v"])
 
     # Geometria prima: rotto/blob hanno priorita su colore.
     if (
@@ -174,13 +180,13 @@ def classify(
     ):
         return "rotto"
 
-    if reference_area and area > reference_area * settings["blob_area_factor"]:
+    if area > settings["blob_area"]:
         return "blob"
 
-    if lab_l < settings["dark_l"]:
+    if hsv_v < settings["dark_v"]:
         return "cotto"
 
-    if lab_l > settings["light_l"]:
+    if hsv_v > settings["light_v"]:
         return "poco"
 
     return "buono"
@@ -240,10 +246,11 @@ def process_frame(
         if settings["show_debug"]:
             cv2.putText(
                 output,
-                "%s | L=%.0f | circ=%.2f | sol=%.2f"
+                "%s | A=%.0f | V=%.0f | circ=%.2f | sol=%.2f"
                 % (
                     label,
-                    float(item["lab_l"]),
+                    float(item["area"]),
+                    float(item["hsv_v"]),
                     float(item["circularity"]),
                     float(item["solidity"]),
                 ),
@@ -301,59 +308,101 @@ def main() -> None:
 
     print("Video:", video_path)
     print("FPS sorgente:", fps)
-    print("Pipeline: OpenCV puro | singolo frame | nessun YOLO | nessun tracking")
-    print("Target test: elaborazione >= FPS sorgente senza rallentamenti")
+    print("Pipeline: OpenCV puro | trigger su singolo frame | nessun YOLO | nessun tracking")
+    print("LIVE alla velocita sorgente; analisi solo al trigger")
 
     paused = False
+    frozen = False
+    frozen_frame = None
+    frozen_output = None
+    frozen_mask = None
     fps_ema = 0.0
     mask_visible = False
 
+    print("Comandi:")
+    print("  T = TRIGGER: congela il frame corrente e lo analizza una volta")
+    print("  R = ritorna al video LIVE")
+    print("  SPAZIO = pausa/riprendi")
+    print("  Q/ESC = esci")
+
     try:
         while True:
-            started = time.perf_counter()
+            loop_started = time.perf_counter()
+            settings = get_settings()
 
-            if not paused:
+            if not frozen and not paused:
                 ok, frame = capture.read()
                 if not ok:
                     break
 
-                settings = get_settings()
-                output, mask, _counts = process_frame(frame, settings)
-
-                processing_elapsed = max(time.perf_counter() - started, 1e-6)
-                current_fps = 1.0 / processing_elapsed
-                fps_ema = current_fps if fps_ema == 0.0 else (0.90 * fps_ema + 0.10 * current_fps)
-
+                # In LIVE non facciamo analisi: massima velocita possibile.
+                live = frame.copy()
                 cv2.putText(
-                    output,
-                    "Processing FPS: %.1f | Source FPS: %.1f"
-                    % (fps_ema, fps),
-                    (15, 58),
+                    live,
+                    "LIVE - premi T per trigger",
+                    (15, 30),
                     cv2.FONT_HERSHEY_SIMPLEX,
-                    0.62,
-                    (255, 255, 255),
+                    0.72,
+                    (0, 255, 0),
                     2,
                     cv2.LINE_AA,
                 )
+                frozen_frame = frame.copy()
+                cv2.imshow(WINDOW_VIDEO, live)
 
-                cv2.imshow(WINDOW_VIDEO, output)
+            elif frozen and frozen_output is not None:
+                cv2.imshow(WINDOW_VIDEO, frozen_output)
 
-                if settings["show_mask"]:
+                if settings["show_mask"] and frozen_mask is not None:
                     if not mask_visible:
                         cv2.namedWindow(WINDOW_MASK, cv2.WINDOW_NORMAL)
                         mask_visible = True
-                    cv2.imshow(WINDOW_MASK, mask)
+                    cv2.imshow(WINDOW_MASK, frozen_mask)
                 elif mask_visible:
                     cv2.destroyWindow(WINDOW_MASK)
                     mask_visible = False
 
-            elapsed = time.perf_counter() - started
+            elapsed = time.perf_counter() - loop_started
             delay_ms = max(1, int((frame_period - elapsed) * 1000))
             key = cv2.waitKey(delay_ms) & 0xFF
 
             if key in (27, ord("q")):
                 break
-            if key == 32:
+
+            if key == ord("t") and frozen_frame is not None:
+                trigger_started = time.perf_counter()
+                frozen_output, frozen_mask, counts = process_frame(
+                    frozen_frame.copy(),
+                    settings,
+                )
+                trigger_ms = (time.perf_counter() - trigger_started) * 1000.0
+
+                cv2.putText(
+                    frozen_output,
+                    "FROZEN - trigger %.1f ms | premi R per LIVE" % trigger_ms,
+                    (15, 58),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.62,
+                    (0, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+                print(
+                    "TRIGGER: %.1f ms | totale=%d | %s"
+                    % (trigger_ms, sum(counts.values()), counts)
+                )
+                frozen = True
+
+            elif key == ord("r"):
+                frozen = False
+                frozen_output = None
+                frozen_mask = None
+                if mask_visible:
+                    cv2.destroyWindow(WINDOW_MASK)
+                    mask_visible = False
+                print("LIVE")
+
+            elif key == 32:
                 paused = not paused
 
     finally:
