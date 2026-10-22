@@ -30,8 +30,16 @@ import os
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, Callable
-import tkinter as tk
-from tkinter import filedialog, messagebox
+
+# Tkinter e opzionale: il motore di visione e la dashboard Streamlit devono
+# poter funzionare anche in ambienti Linux/headless (es. Jetson Nano).
+try:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox
+except (ImportError, ModuleNotFoundError):
+    tk = None
+    filedialog = None
+    messagebox = None
 
 import cv2
 from ultralytics import YOLO
@@ -120,6 +128,12 @@ ROTTO_STRONG_THRESHOLD = 0.12
 
 def choose_inputs() -> tuple[Path, Path, bool, float, float, float, float, float] | None:
     """Mostra una sola GUI per selezionare video, modello e modalita di prova."""
+
+    if tk is None or filedialog is None or messagebox is None:
+        raise RuntimeError(
+            "Tkinter non e disponibile in questo ambiente. "
+            "Su Linux/Jetson avvia la dashboard con: streamlit run dashboard.py"
+        )
 
     root = tk.Tk()
     root.title("visionTar - Selezione input")
@@ -1932,7 +1946,12 @@ def process_video(
 
 
 def show_final_message(title: str, text: str, error: bool = False) -> None:
-    """Mostra il messaggio finale in una finestra separata."""
+    """Mostra il messaggio finale, con fallback testuale negli ambienti headless."""
+    if tk is None or messagebox is None:
+        prefix = "ERRORE" if error else "INFO"
+        print(f"[{prefix}] {title}: {text}")
+        return
+
     root = tk.Tk()
     root.withdraw()
 
