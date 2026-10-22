@@ -10,11 +10,16 @@ La parte di riconoscimento utilizza YOLO. OpenCV viene usato per l'acquisizione 
 
 L'ambiente usato per lo sviluppo è Python 3.11.
 
-Installazione dipendenze: python -m pip install -r requirements.txt
+Il file dei pesi addestrati non è incluso nella repository. Per eseguire l'inferenza è necessario copiare il modello addestrato nella cartella models con il nome best.pt.
 
-Avvio dashboard: streamlit run .\dashboard.py
+Procedura consigliata dopo il clone della repository:
 
-Il modello addestrato usato dal progetto è best.pt, ottenuto dal training sul dataset V2.
+1. creare e attivare un ambiente virtuale Python 3.11;
+2. installare le dipendenze con python -m pip install -r requirements.txt;
+3. copiare il modello in models/best.pt;
+4. avviare la dashboard con streamlit run .\dashboard.py.
+
+Il modello usato durante lo sviluppo è best.pt, ottenuto dal training sul dataset V2. Il percorso è relativo alla cartella del progetto, quindi non dipende dal computer su cui viene eseguito.
 
 **File principali**
 
@@ -22,7 +27,7 @@ visionTar.py contiene l'analisi video, il tracking, il responso finale e la gene
 
 trainTar.py viene usato per il training, testTar.py per la valutazione del modello e buildDatasetV2.py per la preparazione del dataset.
 
-La documentazione del dataset e della validazione si trova in docs/DATASET.md e docs/CALIBRAZIONE.md.
+La documentazione del dataset e della validazione si trova in docs/DATASET.md e docs/CALIBRAZIONE.md. Il dataset V2 e i pesi del modello non sono versionati nella repository; struttura, composizione, split e metriche sono documentati nei file del progetto.
 
 **Funzionamento**
 
