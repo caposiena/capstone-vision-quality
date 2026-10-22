@@ -57,10 +57,8 @@ ROI_TOP_RATIO = BASE_ACQUISITION_PROFILE.roi_top
 ROI_BOTTOM_RATIO = BASE_ACQUISITION_PROFILE.roi_bottom
 DEADLINE_X_RATIO = BASE_ACQUISITION_PROFILE.deadline_x
 
-DEFAULT_MODEL_PATH = Path(
-    "C:/Users/Lello/Documents/GitHub/capstone-vision-quality/"
-    "runs/detect/runs/train/taralli_v2_yolo11n/weights/best.pt"
-)
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "best.pt"
 DEFAULT_DATASET_PATH = Path(
     "C:/Users/Lello/Documents/GitHub/capstone-vision-quality/taralli_yolo_v2"
 )
