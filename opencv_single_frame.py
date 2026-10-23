@@ -519,8 +519,8 @@ class LearnedClassifier:
 
         box_w = max(1, x2 - x1)
         box_h = max(1, y2 - y1)
-        pad_x = max(2, int(box_w * 0.08))
-        pad_y = max(2, int(box_h * 0.08))
+        pad_x = max(3, int(box_w * 0.12))
+        pad_y = max(3, int(box_h * 0.12))
 
         x1 = max(0, x1 - pad_x)
         y1 = max(0, y1 - pad_y)
@@ -536,13 +536,63 @@ class LearnedClassifier:
                 % (features.shape[1], self.feature_count)
             )
 
+        # Feature strutturali finali del vettore:
+        # occupancy, component_count, hole_count, circularity,
+        # solidity, extent, aspect, largest_ratio.
+        component_count = float(features[0, -7])
+        hole_count = float(features[0, -6])
+        solidity = float(features[0, -4])
+        extent = float(features[0, -3])
+        aspect = float(features[0, -2])
+        largest_ratio = float(features[0, -1])
+
         prediction = self.model.predict(features)
         class_id = int(prediction[0])
 
         if class_id < 0 or class_id >= len(self.class_names):
-            return "buono"
+            class_id = self.class_names.index("buono")
 
-        return self.class_names[class_id]
+        label = self.class_names[class_id]
+
+        # Probabilita del modello, quando disponibili.
+        blob_probability = 0.0
+        rotto_probability = 0.0
+        if hasattr(self.model, "predict_proba"):
+            probabilities = self.model.predict_proba(features)[0]
+            for idx, class_value in enumerate(self.model.classes_):
+                class_name = self.class_names[int(class_value)]
+                if class_name == "blob":
+                    blob_probability = float(probabilities[idx])
+                elif class_name == "rotto":
+                    rotto_probability = float(probabilities[idx])
+
+        # Stadio 1: struttura di gruppo.
+        # Un vero blob industriale e prima di tutto piu di un pezzo/sagoma
+        # nello stesso crop, non semplicemente un singolo tarallo deformato.
+        clear_group = (
+            component_count >= 2.0
+            or hole_count >= 2.0
+            or aspect >= 1.65
+        )
+
+        probable_group = (
+            largest_ratio >= 0.48
+            and (
+                solidity <= 0.82
+                or extent <= 0.46
+                or aspect >= 1.48
+            )
+        )
+
+        if clear_group:
+            return "blob"
+
+        # Se ExtraTrees oscilla tra ROTTO e BLOB, la struttura decide.
+        if label == "rotto" and probable_group:
+            if blob_probability >= 0.18 or blob_probability >= rotto_probability * 0.55:
+                return "blob"
+
+        return label
 
 
 class CentroidTracker:
