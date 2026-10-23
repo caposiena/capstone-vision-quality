@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import time
 from pathlib import Path
 
@@ -8,29 +9,35 @@ import cv2
 import numpy as np
 
 
-WINDOW_VIDEO = "visionTar - OpenCV single frame"
+WINDOW_VIDEO = "visionTar - OpenCV"
 WINDOW_MASK = "visionTar - Maschera"
 WINDOW_SETTINGS = "visionTar - Settaggi"
 
-# Default richiesti per la prova PC.
+# Interfaccia operativa: solo parametri che servono davvero durante la prova.
 DEFAULT_ROI_LEFT = 30
 DEFAULT_ROI_RIGHT = 12
 DEFAULT_ROI_TOP = 7
 DEFAULT_ROI_BOTTOM = 51
+DEFAULT_DEADLINE = 35
+DEFAULT_SPEED = 100
 
-# Soglie iniziali, volutamente regolabili live.
-DEFAULT_MIN_AREA = 500
-DEFAULT_MAX_AREA = 14000
-DEFAULT_MIN_SAT = 25
-DEFAULT_BLUE_MARGIN = 10
-DEFAULT_BLUR = 3
-DEFAULT_MORPH = 3
-DEFAULT_MIN_COMPONENT = 80
-DEFAULT_DARK_V = 150
-DEFAULT_LIGHT_V = 220
-DEFAULT_BLOB_AREA = 8000
-DEFAULT_ROTTO_SOLIDITY = 82
-DEFAULT_ROTTO_CIRCULARITY = 55
+# Parametri tecnici interni. Non sono esposti all'operatore.
+BLUE_DOMINANCE = 12
+MIN_COMPONENT_AREA = 120
+TRACK_MAX_DISTANCE = 85.0
+TRACK_MAX_MISSED = 10
+
+# Soglie iniziali ricavate dalla logica del prototipo OpenCV osservato:
+# geometria/area per rotto e blob; luminosita HSV V per cotto/poco.
+DARK_V = 150.0
+LIGHT_V = 220.0
+BLOB_AREA_FACTOR = 1.65
+ROTTO_MAX_CIRCULARITY = 0.55
+ROTTO_MAX_SOLIDITY = 0.86
+ROTTO_MIN_ASPECT = 0.70
+ROTTO_MAX_ASPECT = 1.40
+ROTTO_MAX_EXTENT = 0.48
+ROTTO_MIN_SIGNALS = 2
 
 CLASS_COLORS = {
     "buono": (0, 255, 0),
@@ -45,120 +52,60 @@ def noop(_value: int) -> None:
     pass
 
 
-def create_trackbars() -> None:
+def create_settings_window() -> None:
     cv2.namedWindow(WINDOW_SETTINGS, cv2.WINDOW_NORMAL)
-    cv2.resizeWindow(WINDOW_SETTINGS, 560, 430)
+    cv2.resizeWindow(WINDOW_SETTINGS, 560, 300)
 
     cv2.createTrackbar("ROI SX %", WINDOW_SETTINGS, DEFAULT_ROI_LEFT, 45, noop)
     cv2.createTrackbar("ROI DX %", WINDOW_SETTINGS, DEFAULT_ROI_RIGHT, 45, noop)
     cv2.createTrackbar("ROI ALTO %", WINDOW_SETTINGS, DEFAULT_ROI_TOP, 45, noop)
     cv2.createTrackbar("ROI BASSO %", WINDOW_SETTINGS, DEFAULT_ROI_BOTTOM, 80, noop)
-
-    cv2.createTrackbar("MIN AREA", WINDOW_SETTINGS, DEFAULT_MIN_AREA, 5000, noop)
-    cv2.createTrackbar("MAX AREA /100", WINDOW_SETTINGS, DEFAULT_MAX_AREA // 100, 400, noop)
-    cv2.createTrackbar("SAT MIN", WINDOW_SETTINGS, DEFAULT_MIN_SAT, 255, noop)
-    cv2.createTrackbar("BLUE MARGIN", WINDOW_SETTINGS, DEFAULT_BLUE_MARGIN, 80, noop)
-    cv2.createTrackbar("BLUR", WINDOW_SETTINGS, DEFAULT_BLUR, 15, noop)
-    cv2.createTrackbar("MORPH", WINDOW_SETTINGS, DEFAULT_MORPH, 15, noop)
-    cv2.createTrackbar("MIN COMPONENT", WINDOW_SETTINGS, DEFAULT_MIN_COMPONENT, 1000, noop)
-
-    cv2.createTrackbar("V MIN SCURO", WINDOW_SETTINGS, DEFAULT_DARK_V, 255, noop)
-    cv2.createTrackbar("V MAX CHIARO", WINDOW_SETTINGS, DEFAULT_LIGHT_V, 255, noop)
-    cv2.createTrackbar("ROTTO SOL %", WINDOW_SETTINGS, DEFAULT_ROTTO_SOLIDITY, 100, noop)
-    cv2.createTrackbar("ROTTO CIRC %", WINDOW_SETTINGS, DEFAULT_ROTTO_CIRCULARITY, 100, noop)
-    cv2.createTrackbar("AREA GROSSO /100", WINDOW_SETTINGS, DEFAULT_BLOB_AREA // 100, 400, noop)
-    cv2.createTrackbar("MOSTRA MASCHERA", WINDOW_SETTINGS, 1, 1, noop)
-    cv2.createTrackbar("MOSTRA DEBUG", WINDOW_SETTINGS, 1, 1, noop)
-    cv2.createTrackbar("VELOCITA %", WINDOW_SETTINGS, 100, 300, noop)
+    cv2.createTrackbar("DEADLINE %", WINDOW_SETTINGS, DEFAULT_DEADLINE, 100, noop)
+    cv2.createTrackbar("VELOCITA %", WINDOW_SETTINGS, DEFAULT_SPEED, 300, noop)
+    cv2.createTrackbar("MASCHERA", WINDOW_SETTINGS, 0, 1, noop)
 
 
-def get_settings() -> dict[str, float]:
+def get_settings() -> dict[str, float | bool]:
     return {
         "roi_left": cv2.getTrackbarPos("ROI SX %", WINDOW_SETTINGS),
         "roi_right": cv2.getTrackbarPos("ROI DX %", WINDOW_SETTINGS),
         "roi_top": cv2.getTrackbarPos("ROI ALTO %", WINDOW_SETTINGS),
         "roi_bottom": cv2.getTrackbarPos("ROI BASSO %", WINDOW_SETTINGS),
-        "min_area": max(20, cv2.getTrackbarPos("MIN AREA", WINDOW_SETTINGS)),
-        "max_area": max(
-            100,
-            cv2.getTrackbarPos("MAX AREA /100", WINDOW_SETTINGS) * 100,
-        ),
-        "min_sat": cv2.getTrackbarPos("SAT MIN", WINDOW_SETTINGS),
-        "blue_margin": cv2.getTrackbarPos("BLUE MARGIN", WINDOW_SETTINGS),
-        "blur": max(1, cv2.getTrackbarPos("BLUR", WINDOW_SETTINGS) | 1),
-        "morph": max(1, cv2.getTrackbarPos("MORPH", WINDOW_SETTINGS) | 1),
-        "min_component": max(
-            1,
-            cv2.getTrackbarPos("MIN COMPONENT", WINDOW_SETTINGS),
-        ),
-        "dark_v": cv2.getTrackbarPos("V MIN SCURO", WINDOW_SETTINGS),
-        "light_v": cv2.getTrackbarPos("V MAX CHIARO", WINDOW_SETTINGS),
-        "rotto_solidity": cv2.getTrackbarPos("ROTTO SOL %", WINDOW_SETTINGS) / 100.0,
-        "rotto_circularity": cv2.getTrackbarPos("ROTTO CIRC %", WINDOW_SETTINGS) / 100.0,
-        "blob_area": max(
-            100.0,
-            float(cv2.getTrackbarPos("AREA GROSSO /100", WINDOW_SETTINGS) * 100),
-        ),
-        "show_mask": cv2.getTrackbarPos("MOSTRA MASCHERA", WINDOW_SETTINGS) == 1,
-        "show_debug": cv2.getTrackbarPos("MOSTRA DEBUG", WINDOW_SETTINGS) == 1,
-        "speed_pct": max(
-            10,
-            cv2.getTrackbarPos("VELOCITA %", WINDOW_SETTINGS),
-        ),
+        "deadline": cv2.getTrackbarPos("DEADLINE %", WINDOW_SETTINGS),
+        "speed_pct": max(10, cv2.getTrackbarPos("VELOCITA %", WINDOW_SETTINGS)),
+        "show_mask": cv2.getTrackbarPos("MASCHERA", WINDOW_SETTINGS) == 1,
     }
 
 
-def build_mask(
-    roi: np.ndarray,
-    min_sat: int,
-    blue_margin: int,
-    blur_size: int = 3,
-    morph_size: int = 3,
-    min_component: int = 80,
-) -> np.ndarray:
-    # SILHOUETTE-FIRST:
-    # 1) riduce il rumore;
-    # 2) elimina il fondo blu con una regola cromatica semplice;
-    # 3) produce una maschera 1-bit;
-    # 4) elimina piccoli componenti prima dei contorni.
-    if blur_size > 1:
-        roi_work = cv2.GaussianBlur(roi, (blur_size, blur_size), 0)
-    else:
-        roi_work = roi
+def build_mask(roi: np.ndarray) -> np.ndarray:
+    """Riduce il ROI a silhouette binarie: bianco=tarallo, nero=fondo."""
+    blurred = cv2.GaussianBlur(roi, (3, 3), 0)
+    b, g, r = cv2.split(blurred)
 
-    b, g, r = cv2.split(roi_work)
-    non_blue = (
-        (b.astype(np.int16) + blue_margin < g.astype(np.int16))
-        | (b.astype(np.int16) + blue_margin < r.astype(np.int16))
+    b16 = b.astype(np.int16)
+    g16 = g.astype(np.int16)
+    r16 = r.astype(np.int16)
+
+    blue_background = (
+        (b16 > g16 + BLUE_DOMINANCE)
+        & (b16 > r16 + BLUE_DOMINANCE)
     )
 
-    hsv = cv2.cvtColor(roi_work, cv2.COLOR_BGR2HSV)
-    sat_ok = hsv[:, :, 1] >= min_sat
-    mask = ((non_blue & sat_ok).astype(np.uint8) * 255)
+    mask = ((~blue_background).astype(np.uint8) * 255)
 
-    if morph_size > 1:
-        kernel = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE,
-            (morph_size, morph_size),
-        )
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
-    # Rimuove subito il rumore: dopo questo punto lavoriamo solo con
-    # silhouette candidate, non piu con tutti i pixel del frame.
-    count, labels, stats, _centroids = cv2.connectedComponentsWithStats(
-        mask,
-        connectivity=8,
-    )
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
     cleaned = np.zeros_like(mask)
 
     for label_id in range(1, count):
         area = int(stats[label_id, cv2.CC_STAT_AREA])
-        if area >= min_component:
+        if area >= MIN_COMPONENT_AREA:
             cleaned[labels == label_id] = 255
 
     return cleaned
-
 
 
 def contour_features(
@@ -166,91 +113,96 @@ def contour_features(
     frame: np.ndarray,
     offset_x: int,
     offset_y: int,
-) -> dict[str, float | tuple[int, int, int, int]]:
+) -> dict[str, object]:
     area = float(cv2.contourArea(contour))
     perimeter = float(cv2.arcLength(contour, True))
     x, y, w, h = cv2.boundingRect(contour)
+
     hull = cv2.convexHull(contour)
     hull_area = float(cv2.contourArea(hull))
 
     circularity = (
-        4.0 * np.pi * area / (perimeter * perimeter)
+        4.0 * math.pi * area / (perimeter * perimeter)
         if perimeter > 0
         else 0.0
     )
     solidity = area / hull_area if hull_area > 0 else 0.0
-    extent = area / float(w * h) if w > 0 and h > 0 else 0.0
-    aspect = float(w) / float(h) if h > 0 else 0.0
+    extent = area / float(max(1, w * h))
+    aspect = float(w) / float(max(1, h))
 
-    fx1, fy1 = offset_x + x, offset_y + y
-    fx2, fy2 = fx1 + w, fy1 + h
+    x1 = offset_x + x
+    y1 = offset_y + y
+    x2 = x1 + w
+    y2 = y1 + h
+    cx = (x1 + x2) // 2
+    cy = (y1 + y2) // 2
 
-    crop = frame[fy1:fy2, fx1:fx2]
+    crop = frame[y1:y2, x1:x2]
     local_mask = np.zeros((h, w), dtype=np.uint8)
     shifted = contour.copy()
     shifted[:, 0, 0] -= x
     shifted[:, 0, 1] -= y
     cv2.drawContours(local_mask, [shifted], -1, 255, -1)
 
-    lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
-    valid_l = lab[:, :, 0][local_mask > 0]
-    lab_l = float(np.median(valid_l)) if valid_l.size else 0.0
-
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    valid_v = hsv[:, :, 2][local_mask > 0]
-    hsv_v = float(np.median(valid_v)) if valid_v.size else 0.0
+    values = hsv[:, :, 2][local_mask > 0]
+    median_v = float(np.median(values)) if values.size else 0.0
 
     return {
-        "bbox": (fx1, fy1, fx2, fy2),
+        "bbox": (x1, y1, x2, y2),
+        "center": (cx, cy),
         "area": area,
         "circularity": circularity,
         "solidity": solidity,
         "extent": extent,
         "aspect": aspect,
-        "lab_l": lab_l,
-        "hsv_v": hsv_v,
+        "v": median_v,
     }
 
 
-def classify(
-    features: dict[str, float | tuple[int, int, int, int]],
-    settings: dict[str, float],
-    reference_area: float | None,
-) -> str:
+def classify(features: dict[str, object], reference_area: float | None) -> str:
     area = float(features["area"])
     circularity = float(features["circularity"])
     solidity = float(features["solidity"])
-    lab_l = float(features["lab_l"])
-    hsv_v = float(features["hsv_v"])
+    aspect = float(features["aspect"])
+    extent = float(features["extent"])
+    median_v = float(features["v"])
 
-    # Geometria prima: rotto/blob hanno priorita su colore.
-    if (
-        solidity < settings["rotto_solidity"]
-        or circularity < settings["rotto_circularity"]
-    ):
+    shape_signals = 0
+    if circularity < ROTTO_MAX_CIRCULARITY:
+        shape_signals += 1
+    if solidity < ROTTO_MAX_SOLIDITY:
+        shape_signals += 1
+    if aspect < ROTTO_MIN_ASPECT or aspect > ROTTO_MAX_ASPECT:
+        shape_signals += 1
+    if extent < ROTTO_MAX_EXTENT:
+        shape_signals += 1
+
+    if shape_signals >= ROTTO_MIN_SIGNALS:
         return "rotto"
 
-    if area > settings["blob_area"]:
+    if reference_area and area > reference_area * BLOB_AREA_FACTOR:
         return "blob"
 
-    if hsv_v < settings["dark_v"]:
+    if median_v < DARK_V:
         return "cotto"
 
-    if hsv_v > settings["light_v"]:
+    if median_v > LIGHT_V:
         return "poco"
 
     return "buono"
 
 
-def process_frame(
+def detect_taralli(
     frame: np.ndarray,
-    settings: dict[str, float],
-) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
+    settings: dict[str, float | bool],
+) -> tuple[list[dict[str, object]], np.ndarray, tuple[int, int, int, int]]:
     h, w = frame.shape[:2]
-    x1 = int(w * settings["roi_left"] / 100.0)
-    x2 = int(w * (100.0 - settings["roi_right"]) / 100.0)
-    y1 = int(h * settings["roi_top"] / 100.0)
-    y2 = int(h * (100.0 - settings["roi_bottom"]) / 100.0)
+
+    x1 = int(w * float(settings["roi_left"]) / 100.0)
+    x2 = int(w * (100.0 - float(settings["roi_right"])) / 100.0)
+    y1 = int(h * float(settings["roi_top"]) / 100.0)
+    y2 = int(h * (100.0 - float(settings["roi_bottom"])) / 100.0)
 
     x1 = max(0, min(w - 2, x1))
     x2 = max(x1 + 1, min(w, x2))
@@ -258,14 +210,7 @@ def process_frame(
     y2 = max(y1 + 1, min(h, y2))
 
     roi = frame[y1:y2, x1:x2]
-    mask = build_mask(
-        roi,
-        int(settings["min_sat"]),
-        int(settings["blue_margin"]),
-        int(settings["blur"]),
-        int(settings["morph"]),
-        int(settings["min_component"]),
-    )
+    mask = build_mask(roi)
 
     contours, _ = cv2.findContours(
         mask,
@@ -273,75 +218,206 @@ def process_frame(
         cv2.CHAIN_APPROX_SIMPLE,
     )
 
-    raw_features = []
-    for contour in contours:
-        area = cv2.contourArea(contour)
-        if area < settings["min_area"] or area > settings["max_area"]:
-            continue
-        raw_features.append(contour_features(contour, frame, x1, y1))
+    roi_area = max(1, (x2 - x1) * (y2 - y1))
+    min_area = max(120.0, roi_area * 0.0010)
+    max_area = roi_area * 0.20
 
-    areas = sorted(float(item["area"]) for item in raw_features)
+    features: list[dict[str, object]] = []
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        if area < min_area or area > max_area:
+            continue
+        features.append(contour_features(contour, frame, x1, y1))
+
+    areas = [float(item["area"]) for item in features]
     reference_area = float(np.median(areas)) if areas else None
 
+    for item in features:
+        item["label"] = classify(item, reference_area)
+
+    return features, mask, (x1, y1, x2, y2)
+
+
+class CentroidTracker:
+    def __init__(self) -> None:
+        self.next_id = 1
+        self.tracks: dict[int, dict[str, object]] = {}
+
+    def _new_track(self, detection: dict[str, object], frame_index: int) -> int:
+        track_id = self.next_id
+        self.next_id += 1
+
+        cx, cy = detection["center"]
+        self.tracks[track_id] = {
+            "center": (int(cx), int(cy)),
+            "prev_center": None,
+            "bbox": detection["bbox"],
+            "label": detection["label"],
+            "final_label": None,
+            "last_seen": frame_index,
+            "missed": 0,
+        }
+        return track_id
+
+    def update(
+        self,
+        detections: list[dict[str, object]],
+        frame_index: int,
+        deadline_x: int,
+    ) -> list[tuple[int, dict[str, object], bool]]:
+        assigned_tracks: set[int] = set()
+        results: list[tuple[int, dict[str, object], bool]] = []
+
+        # Associazione semplice e veloce per distanza del baricentro.
+        for detection in detections:
+            dcx, dcy = detection["center"]
+            best_id = None
+            best_distance = TRACK_MAX_DISTANCE
+
+            for track_id, track in self.tracks.items():
+                if track_id in assigned_tracks:
+                    continue
+
+                tcx, tcy = track["center"]
+                distance = math.hypot(float(dcx) - float(tcx), float(dcy) - float(tcy))
+                if distance < best_distance:
+                    best_distance = distance
+                    best_id = track_id
+
+            if best_id is None:
+                best_id = self._new_track(detection, frame_index)
+                track = self.tracks[best_id]
+            else:
+                track = self.tracks[best_id]
+                track["prev_center"] = track["center"]
+                track["center"] = (int(dcx), int(dcy))
+                track["bbox"] = detection["bbox"]
+                track["label"] = detection["label"]
+                track["last_seen"] = frame_index
+                track["missed"] = 0
+
+            assigned_tracks.add(best_id)
+
+            crossed = False
+            prev_center = track.get("prev_center")
+            if prev_center is not None and track["final_label"] is None:
+                prev_x = int(prev_center[0])
+                curr_x = int(track["center"][0])
+                crossed = (
+                    (prev_x - deadline_x) * (curr_x - deadline_x) <= 0
+                    and abs(curr_x - prev_x) >= 2
+                )
+                if crossed:
+                    track["final_label"] = str(detection["label"])
+
+            display_detection = dict(detection)
+            display_detection["display_label"] = (
+                track["final_label"] if track["final_label"] else detection["label"]
+            )
+            results.append((best_id, display_detection, crossed))
+
+        # Invecchiamento track non osservati.
+        expired = []
+        for track_id, track in self.tracks.items():
+            if track_id not in assigned_tracks:
+                track["missed"] = int(track["missed"]) + 1
+                if int(track["missed"]) > TRACK_MAX_MISSED:
+                    expired.append(track_id)
+
+        for track_id in expired:
+            del self.tracks[track_id]
+
+        return results
+
+
+def draw_overlay(
+    frame: np.ndarray,
+    tracked: list[tuple[int, dict[str, object], bool]],
+    roi: tuple[int, int, int, int],
+    deadline_x: int,
+    processing_fps: float,
+    source_fps: float,
+    speed_pct: float,
+) -> np.ndarray:
     output = frame.copy()
-    counts = {name: 0 for name in CLASS_COLORS}
+    x1, y1, x2, y2 = roi
 
     cv2.rectangle(output, (x1, y1), (x2, y2), (180, 180, 180), 1)
-
-    for item in raw_features:
-        label = classify(item, settings, reference_area)
-        counts[label] += 1
-
-        bx1, by1, bx2, by2 = item["bbox"]
-        color = CLASS_COLORS[label]
-
-        cv2.rectangle(output, (bx1, by1), (bx2, by2), color, 2)
-        if settings["show_debug"]:
-            cv2.putText(
-                output,
-                "%s | A=%.0f | V=%.0f | C=%.2f | S=%.2f | E=%.2f"
-                % (
-                    label,
-                    float(item["area"]),
-                    float(item["hsv_v"]),
-                    float(item["circularity"]),
-                    float(item["solidity"]),
-                    float(item["extent"]),
-                ),
-                (bx1, max(18, by1 - 6)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.47,
-                color,
-                1,
-                cv2.LINE_AA,
-            )
-
-    total = sum(counts.values())
+    cv2.line(output, (deadline_x, y1), (deadline_x, y2), (0, 165, 255), 2)
     cv2.putText(
         output,
-        "Totale=%d  buono=%d  cotto=%d  poco=%d  blob=%d  rotto=%d"
-        % (
-            total,
-            counts["buono"],
-            counts["cotto"],
-            counts["poco"],
-            counts["blob"],
-            counts["rotto"],
-        ),
-        (15, 30),
+        "DEADLINE",
+        (max(5, deadline_x - 42), max(20, y1 - 8)),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
+        0.50,
+        (0, 165, 255),
+        1,
+        cv2.LINE_AA,
+    )
+
+    counts = {name: 0 for name in CLASS_COLORS}
+
+    for track_id, detection, _crossed in tracked:
+        label = str(detection["display_label"])
+        counts[label] = counts.get(label, 0) + 1
+
+        bx1, by1, bx2, by2 = detection["bbox"]
+        cx, cy = detection["center"]
+        color = CLASS_COLORS.get(label, (200, 200, 200))
+
+        cv2.rectangle(output, (bx1, by1), (bx2, by2), color, 2)
+        cv2.circle(output, (int(cx), int(cy)), 3, color, -1)
+
+        track = tracker.tracks.get(track_id)
+        state = "FINAL" if track and track.get("final_label") else "LIVE"
+
+        cv2.putText(
+            output,
+            "#%d %s %s" % (track_id, label.upper(), state),
+            (bx1, max(18, by1 - 6)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.52,
+            color,
+            2,
+            cv2.LINE_AA,
+        )
+
+    cv2.putText(
+        output,
+        "OpenCV | %.1f FPS proc | %.1f FPS video | velocita %.0f%%"
+        % (processing_fps, source_fps, speed_pct),
+        (12, 28),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.58,
         (255, 255, 255),
         2,
         cv2.LINE_AA,
     )
 
-    return output, mask, counts
+    cv2.putText(
+        output,
+        "B:%d  C:%d  P:%d  BL:%d  R:%d"
+        % (
+            counts.get("buono", 0),
+            counts.get("cotto", 0),
+            counts.get("poco", 0),
+            counts.get("blob", 0),
+            counts.get("rotto", 0),
+        ),
+        (12, 54),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2,
+        cv2.LINE_AA,
+    )
+
+    return output
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="VisionTar - prova PC solo OpenCV, classificazione per singolo frame"
+        description="visionTar - pipeline OpenCV pura realtime"
     )
     parser.add_argument("video", type=Path, help="Percorso del file MP4")
     args = parser.parse_args()
@@ -354,112 +430,111 @@ def main() -> None:
     if not capture.isOpened():
         raise RuntimeError("Impossibile aprire il video")
 
-    fps = float(capture.get(cv2.CAP_PROP_FPS) or 30.0)
-    frame_period = 1.0 / fps
+    source_fps = float(capture.get(cv2.CAP_PROP_FPS) or 30.0)
+    source_period = 1.0 / source_fps
 
     cv2.namedWindow(WINDOW_VIDEO, cv2.WINDOW_NORMAL)
-    create_trackbars()
+    create_settings_window()
+
+    global tracker
+    tracker = CentroidTracker()
+
+    frame_index = 0
+    processing_fps = 0.0
+    paused = False
+    mask_visible = False
+    last_output = None
 
     print("Video:", video_path)
-    print("FPS sorgente:", fps)
-    print("Pipeline: OpenCV puro | trigger su singolo frame | nessun YOLO | nessun tracking")
-    print("LIVE alla velocita sorgente; analisi solo al trigger")
-
-    paused = False
-    frozen = False
-    frozen_frame = None
-    frozen_output = None
-    frozen_mask = None
-    fps_ema = 0.0
-    mask_visible = False
-
-    print("Comandi:")
-    print("  T = TRIGGER: congela il frame corrente e lo analizza una volta")
-    print("  R = ritorna al video LIVE")
-    print("  SPAZIO = pausa/riprendi")
-    print("  Q/ESC = esci")
+    print("FPS sorgente:", source_fps)
+    print("Pipeline: OpenCV puro | analisi continua | deadline | nessun YOLO")
+    print("Tasti: SPAZIO pausa | M maschera | Q/ESC uscita")
 
     try:
         while True:
-            loop_started = time.perf_counter()
+            loop_start = time.perf_counter()
             settings = get_settings()
 
-            if not frozen and not paused:
+            if not paused:
                 ok, frame = capture.read()
                 if not ok:
                     break
 
-                # In LIVE non facciamo analisi: massima velocita possibile.
-                live = frame.copy()
-                cv2.putText(
-                    live,
-                    "LIVE %.0f%% - premi T per trigger" % settings["speed_pct"],
-                    (15, 30),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.72,
-                    (0, 255, 0),
-                    2,
-                    cv2.LINE_AA,
+                frame_index += 1
+                analysis_start = time.perf_counter()
+
+                detections, mask, roi = detect_taralli(frame, settings)
+
+                deadline_x = int(
+                    frame.shape[1] * float(settings["deadline"]) / 100.0
                 )
-                frozen_frame = frame.copy()
-                cv2.imshow(WINDOW_VIDEO, live)
 
-            elif frozen and frozen_output is not None:
-                cv2.imshow(WINDOW_VIDEO, frozen_output)
+                tracked = tracker.update(
+                    detections,
+                    frame_index,
+                    deadline_x,
+                )
 
-                if settings["show_mask"] and frozen_mask is not None:
+                analysis_elapsed = max(
+                    time.perf_counter() - analysis_start,
+                    1e-6,
+                )
+                instant_fps = 1.0 / analysis_elapsed
+                processing_fps = (
+                    instant_fps
+                    if processing_fps == 0.0
+                    else processing_fps * 0.90 + instant_fps * 0.10
+                )
+
+                for track_id, detection, crossed in tracked:
+                    if crossed:
+                        label = str(detection["display_label"])
+                        print(
+                            "FINAL ID %d | %s | x=%d y=%d"
+                            % (
+                                track_id,
+                                label,
+                                int(detection["center"][0]),
+                                int(detection["center"][1]),
+                            )
+                        )
+
+                last_output = draw_overlay(
+                    frame,
+                    tracked,
+                    roi,
+                    deadline_x,
+                    processing_fps,
+                    source_fps,
+                    float(settings["speed_pct"]),
+                )
+                cv2.imshow(WINDOW_VIDEO, last_output)
+
+                if bool(settings["show_mask"]):
                     if not mask_visible:
                         cv2.namedWindow(WINDOW_MASK, cv2.WINDOW_NORMAL)
                         mask_visible = True
-                    cv2.imshow(WINDOW_MASK, frozen_mask)
+                    cv2.imshow(WINDOW_MASK, mask)
                 elif mask_visible:
                     cv2.destroyWindow(WINDOW_MASK)
                     mask_visible = False
 
-            elapsed = time.perf_counter() - loop_started
-            speed_factor = settings["speed_pct"] / 100.0
-            target_period = frame_period / speed_factor
-            delay_ms = max(1, int((target_period - elapsed) * 1000))
+            elif last_output is not None:
+                cv2.imshow(WINDOW_VIDEO, last_output)
+
+            elapsed = time.perf_counter() - loop_start
+            speed_factor = float(settings["speed_pct"]) / 100.0
+            target_period = source_period / speed_factor
+            delay_ms = max(1, int((target_period - elapsed) * 1000.0))
             key = cv2.waitKey(delay_ms) & 0xFF
 
             if key in (27, ord("q")):
                 break
-
-            if key == ord("t") and frozen_frame is not None:
-                trigger_started = time.perf_counter()
-                frozen_output, frozen_mask, counts = process_frame(
-                    frozen_frame.copy(),
-                    settings,
-                )
-                trigger_ms = (time.perf_counter() - trigger_started) * 1000.0
-
-                cv2.putText(
-                    frozen_output,
-                    "FROZEN - trigger %.1f ms | premi R per LIVE" % trigger_ms,
-                    (15, 58),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.62,
-                    (0, 255, 255),
-                    2,
-                    cv2.LINE_AA,
-                )
-                print(
-                    "TRIGGER: %.1f ms | totale=%d | %s"
-                    % (trigger_ms, sum(counts.values()), counts)
-                )
-                frozen = True
-
-            elif key == ord("r"):
-                frozen = False
-                frozen_output = None
-                frozen_mask = None
-                if mask_visible:
-                    cv2.destroyWindow(WINDOW_MASK)
-                    mask_visible = False
-                print("LIVE")
-
-            elif key == 32:
+            if key == 32:
                 paused = not paused
+            if key == ord("m"):
+                current = 1 if bool(settings["show_mask"]) else 0
+                cv2.setTrackbarPos("MASCHERA", WINDOW_SETTINGS, 1 - current)
 
     finally:
         capture.release()
