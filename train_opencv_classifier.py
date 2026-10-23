@@ -208,6 +208,28 @@ def main() -> None:
 
     pred = model.predict(x_test).astype(np.int32)
 
+    # Classificatore binario dedicato BLOB / NON-BLOB.
+    blob_class_id = names.index("blob")
+    y_train_blob = (y_train == blob_class_id).astype(np.int32)
+    y_test_blob = (y_test == blob_class_id).astype(np.int32)
+
+    blob_model = ExtraTreesClassifier(
+        n_estimators=350,
+        max_depth=None,
+        min_samples_leaf=1,
+        max_features="sqrt",
+        class_weight="balanced",
+        random_state=84,
+        n_jobs=-1,
+    )
+    blob_model.fit(x_train, y_train_blob)
+    blob_pred = blob_model.predict(x_test).astype(np.int32)
+    blob_accuracy = (
+        float(np.mean(blob_pred == y_test_blob))
+        if len(y_test_blob)
+        else 0.0
+    )
+
     accuracy = float(np.mean(pred == y_test)) if len(y_test) else 0.0
     confusion = confusion_matrix(
         y_test,
@@ -217,6 +239,9 @@ def main() -> None:
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, args.output)
+
+    blob_output = args.output.with_name("opencv_blob_binary.joblib")
+    joblib.dump(blob_model, blob_output)
 
     meta_path = args.output.with_suffix(".json")
     meta_path.write_text(
@@ -231,6 +256,8 @@ def main() -> None:
                 "test_samples": int(len(y_test)),
                 "model_type": "sklearn.ensemble.ExtraTreesClassifier",
                 "validation_accuracy": accuracy,
+                "blob_binary_accuracy": blob_accuracy,
+                "blob_binary_model": str(blob_output.name),
                 "confusion_matrix": confusion.tolist(),
             },
             indent=2,
@@ -242,9 +269,11 @@ def main() -> None:
     print("Classi:", names)
     print("Feature:", x.shape[1])
     print("Accuracy validation: %.2f%%" % (accuracy * 100.0))
+    print("Blob binary accuracy: %.2f%%" % (blob_accuracy * 100.0))
     print("Confusion matrix:")
     print(confusion)
     print("Modello ExtraTrees:", args.output)
+    print("Modello blob binary:", blob_output)
     print("Metadata:", meta_path)
 
 
