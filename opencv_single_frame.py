@@ -500,6 +500,69 @@ def detect_taralli(
     return features, mask, (x1, y1, x2, y2)
 
 
+def count_valid_ring_holes(crop: np.ndarray) -> int:
+    """Conta solo i fori plausibili dei taralli nel crop.
+
+    Evita il vecchio conteggio grezzo della gerarchia contorni, che poteva
+    scambiare rumore/ombre per piu fori. Un foro valido deve avere dimensione
+    e forma compatibili con il foro centrale di un tarallo.
+    """
+    if crop is None or crop.size == 0:
+        return 0
+
+    mask = cv2.inRange(
+        cv2.cvtColor(crop, cv2.COLOR_BGR2HSV),
+        np.array([0, 0, 0], dtype=np.uint8),
+        np.array([179, 255, 150], dtype=np.uint8),
+    )
+
+    # Esclude il bordo esterno del crop: ci interessano regioni scure interne.
+    h, w = mask.shape[:2]
+    border = max(2, int(min(h, w) * 0.06))
+    mask[:border, :] = 0
+    mask[-border:, :] = 0
+    mask[:, :border] = 0
+    mask[:, -border:] = 0
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+
+    contours, _ = cv2.findContours(
+        mask,
+        cv2.RETR_EXTERNAL,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+
+    crop_area = float(max(1, h * w))
+    valid = 0
+
+    for contour in contours:
+        area = float(cv2.contourArea(contour))
+        if area <= 0:
+            continue
+
+        area_ratio = area / crop_area
+        if area_ratio < 0.012 or area_ratio > 0.14:
+            continue
+
+        perimeter = float(cv2.arcLength(contour, True))
+        if perimeter <= 0:
+            continue
+
+        circularity = 4.0 * math.pi * area / (perimeter * perimeter)
+        if circularity < 0.35:
+            continue
+
+        x, y, cw, ch = cv2.boundingRect(contour)
+        aspect = float(cw) / float(max(1, ch))
+        if aspect < 0.55 or aspect > 1.80:
+            continue
+
+        valid += 1
+
+    return valid
+
+
 class LearnedClassifier:
     def __init__(self, model_path: Path) -> None:
         self.model_path = model_path
@@ -542,9 +605,27 @@ class LearnedClassifier:
         box_w = max(1, x2 - x1)
         box_h = max(1, y2 - y1)
 
-        # Crop quadrato centrato sul pezzo, piu simile ai crop usati nel dataset.
         cx = (x1 + x2) // 2
         cy = (y1 + y2) // 2
+
+        # Crop piu largo per la sola analisi geometrica del gruppo.
+        geom_side = int(max(box_w, box_h) * 1.35)
+        gx1 = max(0, cx - geom_side // 2)
+        gy1 = max(0, cy - geom_side // 2)
+        gx2 = min(w, gx1 + geom_side)
+        gy2 = min(h, gy1 + geom_side)
+        gx1 = max(0, gx2 - geom_side)
+        gy1 = max(0, gy2 - geom_side)
+
+        geom_crop = frame[gy1:gy2, gx1:gx2]
+        ring_holes = count_valid_ring_holes(geom_crop)
+
+        # Due o piu fori reali = gruppo/blob.
+        # Questa regola ha priorita sul classificatore rotto.
+        if ring_holes >= 2:
+            return "blob"
+
+        # Per il classificatore ML manteniamo un crop piu vicino al training.
         side = int(max(box_w, box_h) * 1.22)
         side = max(side, 24)
 
@@ -552,8 +633,6 @@ class LearnedClassifier:
         sy1 = max(0, cy - side // 2)
         sx2 = min(w, sx1 + side)
         sy2 = min(h, sy1 + side)
-
-        # Mantiene il crop quadrato anche vicino ai bordi.
         sx1 = max(0, sx2 - side)
         sy1 = max(0, sy2 - side)
 
@@ -582,25 +661,12 @@ class LearnedClassifier:
 
         label = self.class_names[class_id]
 
-        # BLOB richiede doppia conferma:
-        # 1) modello binario molto sicuro
-        # 2) anche il multiclass deve considerarlo blob o quasi blob.
-        if blob_probability >= 0.90:
-            if label == "blob":
-                return "blob"
-            if hasattr(self.model, "predict_proba"):
-                probabilities = self.model.predict_proba(features)[0]
-                blob_idx = None
-                for idx, class_value in enumerate(self.model.classes_):
-                    if self.class_names[int(class_value)] == "blob":
-                        blob_idx = idx
-                        break
-                if blob_idx is not None and float(probabilities[blob_idx]) >= 0.35:
-                    return "blob"
-
-        # Se il multiclass propone blob ma il binario non conferma forte,
-        # scegliamo la seconda classe.
+        # Se e un singolo anello, blob richiede una conferma molto forte
+        # da entrambi i modelli.
         if label == "blob":
+            if blob_probability >= 0.95:
+                return "blob"
+
             if hasattr(self.model, "predict_proba"):
                 probabilities = self.model.predict_proba(features)[0]
                 ranked = np.argsort(probabilities)[::-1]
@@ -608,6 +674,7 @@ class LearnedClassifier:
                     candidate = self.class_names[int(self.model.classes_[idx])]
                     if candidate != "blob":
                         return candidate
+
             return "rotto"
 
         return label
