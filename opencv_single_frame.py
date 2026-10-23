@@ -45,6 +45,12 @@ POCO_MIN_LAB_L_MARGIN = 6.0
 COTTO_MIN_V_MARGIN = 12.0
 COTTO_MIN_LAB_L_MARGIN = 10.0
 
+# Normalizzazione locale rispetto al fondo blu vicino al singolo pezzo.
+POCO_MIN_V_BG_RATIO = 0.92
+POCO_MIN_L_BG_DELTA = -5.0
+COTTO_MAX_V_BG_RATIO = 0.72
+COTTO_MAX_L_BG_DELTA = -45.0
+
 ROTTO_MAX_CIRCULARITY = 0.62
 ROTTO_MAX_SOLIDITY = 0.88
 ROTTO_MIN_ASPECT = 0.72
@@ -269,6 +275,36 @@ def contour_features(
     median_s = float(np.median(values_s)) if values_s.size else 0.0
     median_lab_l = float(np.median(values_l)) if values_l.size else 0.0
 
+    # Fondo locale: anello rettangolare attorno alla bbox, escluso il prodotto.
+    frame_h, frame_w = frame.shape[:2]
+    pad_x = max(6, int(w * 0.35))
+    pad_y = max(6, int(h * 0.35))
+    rx1 = max(0, x1 - pad_x)
+    ry1 = max(0, y1 - pad_y)
+    rx2 = min(frame_w, x2 + pad_x)
+    ry2 = min(frame_h, y2 + pad_y)
+
+    context = frame[ry1:ry2, rx1:rx2]
+    bg_v = 0.0
+    bg_l = 0.0
+
+    if context.size:
+        context_hsv = cv2.cvtColor(context, cv2.COLOR_BGR2HSV)
+        context_lab = cv2.cvtColor(context, cv2.COLOR_BGR2LAB)
+
+        cb, cg, cr = cv2.split(context)
+        blue_bg = (
+            (cb.astype(np.int16) > cg.astype(np.int16) + 8)
+            & (cb.astype(np.int16) > cr.astype(np.int16) + 8)
+        )
+
+        if np.count_nonzero(blue_bg) >= 20:
+            bg_v = float(np.median(context_hsv[:, :, 2][blue_bg]))
+            bg_l = float(np.median(context_lab[:, :, 0][blue_bg]))
+
+    v_bg_ratio = median_v / bg_v if bg_v > 1.0 else 0.0
+    l_bg_delta = median_lab_l - bg_l if bg_l > 1.0 else 0.0
+
     return {
         "bbox": (x1, y1, x2, y2),
         "center": (cx, cy),
@@ -281,6 +317,10 @@ def contour_features(
         "s": median_s,
         "lab_l": median_lab_l,
         "holes": hole_count,
+        "bg_v": bg_v,
+        "bg_lab_l": bg_l,
+        "v_bg_ratio": v_bg_ratio,
+        "l_bg_delta": l_bg_delta,
     }
 
 
@@ -298,12 +338,29 @@ def classify(
     median_s = float(features["s"])
     median_lab_l = float(features["lab_l"])
     hole_count = int(features.get("holes", 0))
+    v_bg_ratio = float(features.get("v_bg_ratio", 0.0))
+    l_bg_delta = float(features.get("l_bg_delta", 0.0))
 
-    # 1) BLOB: due o piu fori chiusi sono un segnale diretto di gruppo.
+    # 1) BLOB: non basta piu la sola area.
+    # Due o piu fori sono evidenza diretta di gruppo.
     if hole_count >= 2:
         return "blob"
 
-    # 2) ROTTO: richiede piu segnali geometrici simultanei.
+    oversized = (
+        reference_area is not None
+        and area > reference_area * 1.80
+    )
+    group_geometry = (
+        aspect < 0.62
+        or aspect > 1.55
+        or solidity < 0.78
+        or extent < 0.42
+    )
+
+    if oversized and group_geometry:
+        return "blob"
+
+    # 2) ROTTO: richiede segnali geometrici concordanti.
     shape_signals = 0
     if circularity < ROTTO_MAX_CIRCULARITY:
         shape_signals += 1
@@ -316,51 +373,54 @@ def classify(
     if hole_count == 0:
         shape_signals += 1
 
-    # Un oggetto molto grande ma con geometria coerente non viene subito
-    # chiamato blob: prima deve risultare davvero un componente multiplo.
-    if reference_area and area > reference_area * BLOB_AREA_FACTOR:
-        if area > reference_area * 1.85 or shape_signals >= 1:
-            return "blob"
-
     if shape_signals >= ROTTO_MIN_SIGNALS:
         return "rotto"
 
-    # 2) Firma cromatica: assoluta + relativa ai taralli geometricamente
-    # normali dello stesso frame. Questo rende POCO molto piu prudente.
-    ref_v = color_reference["v"] if color_reference else 0.0
-    ref_l = color_reference["lab_l"] if color_reference else 0.0
+    # 3) Colore: decisione assoluta + normalizzazione rispetto al fondo locale.
+    # Evita che esposizione/ombre globali trasformino un buono in poco/cotto.
+    poco_absolute = (
+        median_v >= POCO_MIN_V
+        and median_lab_l >= POCO_MIN_LAB_L
+        and median_s <= POCO_MAX_S
+    )
+    poco_local = (
+        v_bg_ratio >= POCO_MIN_V_BG_RATIO
+        and l_bg_delta >= POCO_MIN_L_BG_DELTA
+    )
 
     cotto_absolute = (
         median_v <= COTTO_MAX_V
         and median_lab_l <= COTTO_MAX_LAB_L
         and median_s >= COTTO_MIN_S
     )
-    cotto_relative = (
-        color_reference is not None
-        and median_v <= ref_v - COTTO_MIN_V_MARGIN
-        and median_lab_l <= ref_l - COTTO_MIN_LAB_L_MARGIN
+    cotto_local = (
+        v_bg_ratio > 0.0
+        and v_bg_ratio <= COTTO_MAX_V_BG_RATIO
+        and l_bg_delta <= COTTO_MAX_L_BG_DELTA
     )
 
-    poco_absolute = (
-        median_v >= POCO_MIN_V
-        and median_lab_l >= POCO_MIN_LAB_L
-        and median_s <= POCO_MAX_S
-    )
-    poco_relative = (
-        color_reference is not None
-        and (
+    # Il riferimento del frame resta un controllo secondario, non piu la base.
+    frame_poco_support = False
+    frame_cotto_support = False
+    if color_reference is not None:
+        ref_v = float(color_reference["v"])
+        ref_l = float(color_reference["lab_l"])
+        frame_poco_support = (
             median_v >= ref_v + POCO_MIN_V_MARGIN
             or median_lab_l >= ref_l + POCO_MIN_LAB_L_MARGIN
         )
-    )
+        frame_cotto_support = (
+            median_v <= ref_v - COTTO_MIN_V_MARGIN
+            or median_lab_l <= ref_l - COTTO_MIN_LAB_L_MARGIN
+        )
 
-    if cotto_absolute and cotto_relative:
-        return "cotto"
-
-    if poco_absolute and poco_relative:
+    if poco_absolute and (poco_local or frame_poco_support):
         return "poco"
 
-    # 3) Firma geometrica esplicita del BUONO.
+    if cotto_absolute and (cotto_local or frame_cotto_support):
+        return "cotto"
+
+    # 4) BUONO: firma geometrica esplicita.
     good_geometry = (
         circularity >= GOOD_MIN_CIRCULARITY
         and solidity >= GOOD_MIN_SOLIDITY
@@ -691,6 +751,10 @@ def write_final_report(
         "s_median",
         "lab_l_median",
         "holes",
+        "bg_v",
+        "bg_lab_l",
+        "v_bg_ratio",
+        "l_bg_delta",
     ]
 
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
@@ -832,6 +896,10 @@ def main() -> None:
                                 "s_median": round(float(detection["s"]), 2),
                                 "lab_l_median": round(float(detection["lab_l"]), 2),
                                 "holes": int(detection.get("holes", 0)),
+                                "bg_v": round(float(detection.get("bg_v", 0.0)), 2),
+                                "bg_lab_l": round(float(detection.get("bg_lab_l", 0.0)), 2),
+                                "v_bg_ratio": round(float(detection.get("v_bg_ratio", 0.0)), 4),
+                                "l_bg_delta": round(float(detection.get("l_bg_delta", 0.0)), 2),
                             }
                         )
 
