@@ -500,49 +500,70 @@ def detect_taralli(
     return features, mask, (x1, y1, x2, y2)
 
 
-def count_valid_ring_holes(crop: np.ndarray) -> int:
-    """Conta solo i fori plausibili dei taralli nel crop.
+def analyze_ring_topology(crop: np.ndarray) -> tuple[int, int, int]:
+    """Analizza la topologia della sagoma calda del prodotto.
 
-    Evita il vecchio conteggio grezzo della gerarchia contorni, che poteva
-    scambiare rumore/ombre per piu fori. Un foro valido deve avere dimensione
-    e forma compatibili con il foro centrale di un tarallo.
+    Ritorna:
+    - numero di componenti esterni plausibili;
+    - numero totale di fori interni plausibili;
+    - massimo numero di fori associati a una singola componente.
+
+    Non usa regioni scure dell'immagine grezza, quindi ombre e riflessi
+    non possono essere scambiati per fori.
     """
     if crop is None or crop.size == 0:
-        return 0
+        return 0, 0, 0
 
-    mask = cv2.inRange(
-        cv2.cvtColor(crop, cv2.COLOR_BGR2HSV),
-        np.array([0, 0, 0], dtype=np.uint8),
-        np.array([179, 255, 150], dtype=np.uint8),
-    )
+    mask = cv2.GaussianBlur(crop, (3, 3), 0)
+    b, g, r = cv2.split(mask)
+    hsv = cv2.cvtColor(mask, cv2.COLOR_BGR2HSV)
 
-    # Esclude il bordo esterno del crop: ci interessano regioni scure interne.
-    h, w = mask.shape[:2]
-    border = max(2, int(min(h, w) * 0.06))
-    mask[:border, :] = 0
-    mask[-border:, :] = 0
-    mask[:, :border] = 0
-    mask[:, -border:] = 0
+    b16 = b.astype(np.int16)
+    g16 = g.astype(np.int16)
+    r16 = r.astype(np.int16)
+
+    product_mask = (
+        (r16 > b16 + 8)
+        & (g16 > b16 + 2)
+        & (hsv[:, :, 1] >= 12)
+        & (hsv[:, :, 2] >= 35)
+    ).astype(np.uint8) * 255
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    product_mask = cv2.morphologyEx(
+        product_mask,
+        cv2.MORPH_OPEN,
+        kernel,
+    )
 
-    contours, _ = cv2.findContours(
-        mask,
-        cv2.RETR_EXTERNAL,
+    contours, hierarchy = cv2.findContours(
+        product_mask,
+        cv2.RETR_CCOMP,
         cv2.CHAIN_APPROX_SIMPLE,
     )
 
-    crop_area = float(max(1, h * w))
-    valid = 0
+    if hierarchy is None or not contours:
+        return 0, 0, 0
 
-    for contour in contours:
+    crop_area = float(max(1, crop.shape[0] * crop.shape[1]))
+    min_external_area = crop_area * 0.04
+    min_hole_area = crop_area * 0.008
+    max_hole_area = crop_area * 0.16
+
+    valid_external = []
+    holes_by_parent: dict[int, int] = {}
+
+    for idx, contour in enumerate(contours):
         area = float(cv2.contourArea(contour))
-        if area <= 0:
+        parent = int(hierarchy[0][idx][3])
+
+        if parent < 0:
+            if area >= min_external_area:
+                valid_external.append(idx)
+                holes_by_parent[idx] = 0
             continue
 
-        area_ratio = area / crop_area
-        if area_ratio < 0.012 or area_ratio > 0.14:
+        if area < min_hole_area or area > max_hole_area:
             continue
 
         perimeter = float(cv2.arcLength(contour, True))
@@ -550,17 +571,24 @@ def count_valid_ring_holes(crop: np.ndarray) -> int:
             continue
 
         circularity = 4.0 * math.pi * area / (perimeter * perimeter)
-        if circularity < 0.35:
+        if circularity < 0.30:
             continue
 
-        x, y, cw, ch = cv2.boundingRect(contour)
-        aspect = float(cw) / float(max(1, ch))
-        if aspect < 0.55 or aspect > 1.80:
-            continue
+        # Risale al vero contorno esterno padre.
+        root_parent = parent
+        while int(hierarchy[0][root_parent][3]) >= 0:
+            root_parent = int(hierarchy[0][root_parent][3])
 
-        valid += 1
+        if root_parent in holes_by_parent:
+            holes_by_parent[root_parent] += 1
 
-    return valid
+    external_count = len(valid_external)
+    total_holes = sum(holes_by_parent.values())
+    max_holes_single = max(holes_by_parent.values(), default=0)
+
+    return external_count, total_holes, max_holes_single
+
+
 
 
 class LearnedClassifier:
@@ -618,11 +646,19 @@ class LearnedClassifier:
         gy1 = max(0, gy2 - geom_side)
 
         geom_crop = frame[gy1:gy2, gx1:gx2]
-        ring_holes = count_valid_ring_holes(geom_crop)
+        external_count, total_holes, max_holes_single = analyze_ring_topology(
+            geom_crop
+        )
 
-        # Due o piu fori reali = gruppo/blob.
-        # Questa regola ha priorita sul classificatore rotto.
-        if ring_holes >= 2:
+        # BLOB geometrico solo con evidenza topologica reale:
+        # - almeno due sagome-anello distinte; oppure
+        # - una singola sagoma esterna che contiene almeno due fori validi.
+        geometric_blob = (
+            external_count >= 2
+            or max_holes_single >= 2
+        )
+
+        if geometric_blob:
             return "blob"
 
         # Per il classificatore ML manteniamo un crop piu vicino al training.
@@ -661,10 +697,26 @@ class LearnedClassifier:
 
         label = self.class_names[class_id]
 
-        # Se e un singolo anello, blob richiede una conferma molto forte
-        # da entrambi i modelli.
+        # Se la topologia mostra un solo tarallo ben definito, il modello
+        # non puo trasformarlo in blob per sola incertezza statistica.
+        clean_single_ring = (
+            external_count == 1
+            and total_holes == 1
+            and max_holes_single == 1
+        )
+
         if label == "blob":
-            if blob_probability >= 0.95:
+            if clean_single_ring:
+                if hasattr(self.model, "predict_proba"):
+                    probabilities = self.model.predict_proba(features)[0]
+                    ranked = np.argsort(probabilities)[::-1]
+                    for idx in ranked:
+                        candidate = self.class_names[int(self.model.classes_[idx])]
+                        if candidate != "blob":
+                            return candidate
+                return "buono"
+
+            if blob_probability >= 0.97:
                 return "blob"
 
             if hasattr(self.model, "predict_proba"):
