@@ -509,7 +509,14 @@ class LearnedClassifier:
         self.class_names = [str(x) for x in meta["class_names"]]
         self.feature_count = int(meta["feature_count"])
         self.validation_accuracy = float(meta.get("validation_accuracy", 0.0))
-        self.model = cv2.ml.RTrees_load(str(model_path))
+        if hasattr(cv2.ml, "RTrees_load"):
+            self.model = cv2.ml.RTrees_load(str(model_path))
+        elif hasattr(cv2.ml, "RTrees") and hasattr(cv2.ml.RTrees, "load"):
+            self.model = cv2.ml.RTrees.load(str(model_path))
+        else:
+            raise RuntimeError(
+                "Questa build OpenCV non espone il loader RTrees."
+            )
 
     def predict(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> str:
         x1, y1, x2, y2 = bbox
