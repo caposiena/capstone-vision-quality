@@ -192,7 +192,15 @@ def main() -> None:
     x_train = np.vstack(balanced_x).astype(np.float32)
     y_train = np.concatenate(balanced_y).astype(np.int32)
 
-    model = cv2.ml.RTrees_create()
+    if hasattr(cv2.ml, "RTrees_create"):
+        model = cv2.ml.RTrees_create()
+    elif hasattr(cv2.ml, "RTrees") and hasattr(cv2.ml.RTrees, "create"):
+        model = cv2.ml.RTrees.create()
+    else:
+        raise RuntimeError(
+            "Questa build OpenCV non espone RTrees. Disponibili in cv2.ml: %s"
+            % ", ".join(sorted(name for name in dir(cv2.ml) if "Tree" in name or "Forest" in name))
+        )
     model.setMaxDepth(14)
     model.setMinSampleCount(2)
     model.setRegressionAccuracy(0.0)
