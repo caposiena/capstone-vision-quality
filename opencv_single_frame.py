@@ -30,51 +30,10 @@ DEFAULT_ROI_BOTTOM = 51
 DEFAULT_DEADLINE = 35
 DEFAULT_SPEED = 100
 
-# Parametri tecnici interni. Non sono esposti all'operatore.
-BLUE_DOMINANCE = 12
+# Parametri tecnici interni.
 MIN_COMPONENT_AREA = 120
 TRACK_MAX_DISTANCE = 85.0
 TRACK_MAX_MISSED = 10
-INFERENCE_STRIDE = 2
-
-# Firma geometrica/cromatica iniziale.
-# Le soglie cromatiche riprendono la caratterizzazione del progetto main.
-COTTO_MAX_V = 190.0
-COTTO_MAX_LAB_L = 168.0
-COTTO_MIN_S = 125.0
-POCO_MIN_V = 212.0
-POCO_MIN_LAB_L = 198.0
-POCO_MAX_S = 105.0
-
-# Colorimetria relativa al frame: evita che la sola illuminazione faccia
-# diventare "poco" un tarallo normalmente cotto.
-POCO_MIN_V_MARGIN = 7.0
-POCO_MIN_LAB_L_MARGIN = 6.0
-COTTO_MIN_V_MARGIN = 12.0
-COTTO_MIN_LAB_L_MARGIN = 10.0
-
-# Normalizzazione locale rispetto al fondo blu vicino al singolo pezzo.
-POCO_MIN_V_BG_RATIO = 0.92
-POCO_MIN_L_BG_DELTA = -5.0
-COTTO_MAX_V_BG_RATIO = 0.72
-COTTO_MAX_L_BG_DELTA = -45.0
-
-ROTTO_MAX_CIRCULARITY = 0.62
-ROTTO_MAX_SOLIDITY = 0.88
-ROTTO_MIN_ASPECT = 0.72
-ROTTO_MAX_ASPECT = 1.38
-ROTTO_MAX_EXTENT = 0.55
-ROTTO_MIN_SIGNALS = 2
-
-# Firma esplicita del BUONO: serve a evitare che "buono" sia solo il residuo.
-GOOD_MIN_CIRCULARITY = 0.58
-GOOD_MIN_SOLIDITY = 0.90
-GOOD_MIN_ASPECT = 0.76
-GOOD_MAX_ASPECT = 1.32
-GOOD_MIN_EXTENT = 0.50
-
-# Blob: area sensibilmente superiore al riferimento del frame.
-BLOB_AREA_FACTOR = 1.55
 
 CLASS_COLORS = {
     "buono": (0, 255, 0),
@@ -332,118 +291,6 @@ def contour_features(
     }
 
 
-def classify(
-    features: dict[str, object],
-    reference_area: float | None,
-    color_reference: dict[str, float] | None,
-) -> str:
-    area = float(features["area"])
-    circularity = float(features["circularity"])
-    solidity = float(features["solidity"])
-    aspect = float(features["aspect"])
-    extent = float(features["extent"])
-    median_v = float(features["v"])
-    median_s = float(features["s"])
-    median_lab_l = float(features["lab_l"])
-    hole_count = int(features.get("holes", 0))
-    v_bg_ratio = float(features.get("v_bg_ratio", 0.0))
-    l_bg_delta = float(features.get("l_bg_delta", 0.0))
-
-    # 1) BLOB: non basta piu la sola area.
-    # Due o piu fori sono evidenza diretta di gruppo.
-    if hole_count >= 2:
-        return "blob"
-
-    oversized = (
-        reference_area is not None
-        and area > reference_area * 1.80
-    )
-    group_geometry = (
-        aspect < 0.62
-        or aspect > 1.55
-        or solidity < 0.78
-        or extent < 0.42
-    )
-
-    if oversized and group_geometry:
-        return "blob"
-
-    # 2) ROTTO: richiede segnali geometrici concordanti.
-    shape_signals = 0
-    if circularity < ROTTO_MAX_CIRCULARITY:
-        shape_signals += 1
-    if solidity < ROTTO_MAX_SOLIDITY:
-        shape_signals += 1
-    if aspect < ROTTO_MIN_ASPECT or aspect > ROTTO_MAX_ASPECT:
-        shape_signals += 1
-    if extent < ROTTO_MAX_EXTENT:
-        shape_signals += 1
-    if hole_count == 0:
-        shape_signals += 1
-
-    if shape_signals >= ROTTO_MIN_SIGNALS:
-        return "rotto"
-
-    # 3) Colore: decisione assoluta + normalizzazione rispetto al fondo locale.
-    # Evita che esposizione/ombre globali trasformino un buono in poco/cotto.
-    poco_absolute = (
-        median_v >= POCO_MIN_V
-        and median_lab_l >= POCO_MIN_LAB_L
-        and median_s <= POCO_MAX_S
-    )
-    poco_local = (
-        v_bg_ratio >= POCO_MIN_V_BG_RATIO
-        and l_bg_delta >= POCO_MIN_L_BG_DELTA
-    )
-
-    cotto_absolute = (
-        median_v <= COTTO_MAX_V
-        and median_lab_l <= COTTO_MAX_LAB_L
-        and median_s >= COTTO_MIN_S
-    )
-    cotto_local = (
-        v_bg_ratio > 0.0
-        and v_bg_ratio <= COTTO_MAX_V_BG_RATIO
-        and l_bg_delta <= COTTO_MAX_L_BG_DELTA
-    )
-
-    # Il riferimento del frame resta un controllo secondario, non piu la base.
-    frame_poco_support = False
-    frame_cotto_support = False
-    if color_reference is not None:
-        ref_v = float(color_reference["v"])
-        ref_l = float(color_reference["lab_l"])
-        frame_poco_support = (
-            median_v >= ref_v + POCO_MIN_V_MARGIN
-            or median_lab_l >= ref_l + POCO_MIN_LAB_L_MARGIN
-        )
-        frame_cotto_support = (
-            median_v <= ref_v - COTTO_MIN_V_MARGIN
-            or median_lab_l <= ref_l - COTTO_MIN_LAB_L_MARGIN
-        )
-
-    if poco_absolute and (poco_local or frame_poco_support):
-        return "poco"
-
-    if cotto_absolute and (cotto_local or frame_cotto_support):
-        return "cotto"
-
-    # 4) BUONO: firma geometrica esplicita.
-    good_geometry = (
-        circularity >= GOOD_MIN_CIRCULARITY
-        and solidity >= GOOD_MIN_SOLIDITY
-        and GOOD_MIN_ASPECT <= aspect <= GOOD_MAX_ASPECT
-        and extent >= GOOD_MIN_EXTENT
-        and hole_count == 1
-    )
-
-    if good_geometry:
-        return "buono"
-
-    return "buono"
-
-
-
 def detect_taralli(
     frame: np.ndarray,
     settings: dict[str, float | bool],
@@ -493,9 +340,8 @@ def detect_taralli(
             continue
         features.append(contour_features(contour, frame, mask, x1, y1))
 
-    # Nessuna classificazione qui: prima della deadline OpenCV deve solo
-    # segmentare e tracciare. La classe viene assegnata una sola volta
-    # dal modello RTrees sul frame di crossing.
+    # Prima della deadline OpenCV segmenta e traccia.
+    # La classe viene assegnata una sola volta sul frame di crossing.
 
     return features, mask, (x1, y1, x2, y2)
 
@@ -1031,7 +877,6 @@ def main() -> None:
     cv2.resizeWindow(WINDOW_VIDEO, 1280, 720)
     create_settings_window()
 
-    global tracker
     tracker = CentroidTracker()
 
     classifier = LearnedClassifier(DEFAULT_CLASSIFIER_PATH)
