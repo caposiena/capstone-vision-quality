@@ -4,6 +4,7 @@ import argparse
 import csv
 import math
 import time
+from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
@@ -21,6 +22,15 @@ WINDOW_SETTINGS = "visionTar - Settaggi"
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_CLASSIFIER_PATH = PROJECT_ROOT / "models" / "opencv_extratrees.joblib"
 DEFAULT_BLOB_CLASSIFIER_PATH = PROJECT_ROOT / "models" / "opencv_blob_binary.joblib"
+
+PROFILE_STAGES = (
+    "read",
+    "detect",
+    "track",
+    "classify",
+    "draw",
+    "imshow",
+)
 
 # Interfaccia operativa: solo parametri che servono davvero durante la prova.
 DEFAULT_ROI_LEFT = 30
@@ -472,7 +482,11 @@ class LearnedClassifier:
         self.blob_model = joblib.load(DEFAULT_BLOB_CLASSIFIER_PATH)
 
 
-    def predict(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> str:
+    def predict(
+        self,
+        frame: np.ndarray,
+        bbox: tuple[int, int, int, int],
+    ) -> tuple[str, dict[str, object]]:
         x1, y1, x2, y2 = bbox
         h, w = frame.shape[:2]
 
@@ -482,7 +496,6 @@ class LearnedClassifier:
         cx = (x1 + x2) // 2
         cy = (y1 + y2) // 2
 
-        # Crop piu largo per la sola analisi geometrica del gruppo.
         geom_side = int(max(box_w, box_h) * 1.35)
         gx1 = max(0, cx - geom_side // 2)
         gy1 = max(0, cy - geom_side // 2)
@@ -496,18 +509,27 @@ class LearnedClassifier:
             geom_crop
         )
 
-        # BLOB geometrico solo con evidenza topologica reale:
-        # - almeno due sagome-anello distinte; oppure
-        # - una singola sagoma esterna che contiene almeno due fori validi.
         geometric_blob = (
             external_count >= 2
             or max_holes_single >= 2
         )
 
-        if geometric_blob:
-            return "blob"
+        diagnostics: dict[str, object] = {
+            "external_count": int(external_count),
+            "total_holes": int(total_holes),
+            "max_holes_single": int(max_holes_single),
+            "geometric_blob": bool(geometric_blob),
+            "clean_single_ring": False,
+            "blob_probability": 0.0,
+            "ml_raw_label": "",
+            "decision_rule": "",
+        }
 
-        # Per il classificatore ML manteniamo un crop piu vicino al training.
+        if geometric_blob:
+            diagnostics["decision_rule"] = "geometric_blob"
+            diagnostics["ml_raw_label"] = "not_run"
+            return "blob", diagnostics
+
         side = int(max(box_w, box_h) * 1.22)
         side = max(side, 24)
 
@@ -535,21 +557,25 @@ class LearnedClassifier:
         else:
             blob_probability = float(self.blob_model.predict(features)[0])
 
+        diagnostics["blob_probability"] = blob_probability
+
         prediction = self.model.predict(features)
         class_id = int(prediction[0])
 
         if class_id < 0 or class_id >= len(self.class_names):
-            return "buono"
+            diagnostics["decision_rule"] = "invalid_class_fallback_buono"
+            diagnostics["ml_raw_label"] = "invalid"
+            return "buono", diagnostics
 
         label = self.class_names[class_id]
+        diagnostics["ml_raw_label"] = label
 
-        # Se la topologia mostra un solo tarallo ben definito, il modello
-        # non puo trasformarlo in blob per sola incertezza statistica.
         clean_single_ring = (
             external_count == 1
             and total_holes == 1
             and max_holes_single == 1
         )
+        diagnostics["clean_single_ring"] = bool(clean_single_ring)
 
         if label == "blob":
             if clean_single_ring:
@@ -559,11 +585,14 @@ class LearnedClassifier:
                     for idx in ranked:
                         candidate = self.class_names[int(self.model.classes_[idx])]
                         if candidate != "blob":
-                            return candidate
-                return "buono"
+                            diagnostics["decision_rule"] = "blob_overridden_clean_single"
+                            return candidate, diagnostics
+                diagnostics["decision_rule"] = "blob_overridden_default_buono"
+                return "buono", diagnostics
 
             if blob_probability >= 0.97:
-                return "blob"
+                diagnostics["decision_rule"] = "ml_blob_high_probability"
+                return "blob", diagnostics
 
             if hasattr(self.model, "predict_proba"):
                 probabilities = self.model.predict_proba(features)[0]
@@ -571,11 +600,14 @@ class LearnedClassifier:
                 for idx in ranked:
                     candidate = self.class_names[int(self.model.classes_[idx])]
                     if candidate != "blob":
-                        return candidate
+                        diagnostics["decision_rule"] = "blob_overridden_second_class"
+                        return candidate, diagnostics
 
-            return "rotto"
+            diagnostics["decision_rule"] = "blob_fallback_rotto"
+            return "rotto", diagnostics
 
-        return label
+        diagnostics["decision_rule"] = "ml_multiclass"
+        return label, diagnostics
 
 
 class CentroidTracker:
@@ -816,6 +848,14 @@ def write_final_report(
         "bg_lab_l",
         "v_bg_ratio",
         "l_bg_delta",
+        "decision_rule",
+        "external_count",
+        "total_holes",
+        "max_holes_single",
+        "clean_single_ring",
+        "blob_probability",
+        "ml_raw_label",
+        "classify_ms",
     ]
 
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
@@ -886,6 +926,9 @@ def main() -> None:
     )
 
     report_rows: list[dict[str, object]] = []
+    profile_samples: dict[str, list[float]] = defaultdict(list)
+    excluded_large_objects = 0
+    tracks_without_verdict = 0
 
     frame_index = 0
     processing_fps = 0.0
@@ -904,23 +947,35 @@ def main() -> None:
             settings = get_settings()
 
             if not paused:
+                read_start = time.perf_counter()
                 ok, frame = capture.read()
+                profile_samples["read"].append(
+                    (time.perf_counter() - read_start) * 1000.0
+                )
                 if not ok:
                     break
 
                 frame_index += 1
                 analysis_start = time.perf_counter()
 
+                detect_start = time.perf_counter()
                 detections, mask, roi = detect_taralli(frame, settings)
+                profile_samples["detect"].append(
+                    (time.perf_counter() - detect_start) * 1000.0
+                )
 
                 deadline_x = int(
                     frame.shape[1] * float(settings["deadline"]) / 100.0
                 )
 
+                track_start = time.perf_counter()
                 tracked = tracker.update(
                     detections,
                     frame_index,
                     deadline_x,
+                )
+                profile_samples["track"].append(
+                    (time.perf_counter() - track_start) * 1000.0
                 )
 
                 analysis_elapsed = max(
@@ -936,10 +991,16 @@ def main() -> None:
 
                 for track_id, detection, crossed in tracked:
                     if crossed:
-                        label = classifier.predict(
+                        classify_start = time.perf_counter()
+                        label, diagnostics = classifier.predict(
                             frame,
                             detection["bbox"],
                         )
+                        classify_ms = (
+                            time.perf_counter() - classify_start
+                        ) * 1000.0
+                        profile_samples["classify"].append(classify_ms)
+
                         tracker.tracks[track_id]["final_label"] = label
                         detection["display_label"] = label
                         cx, cy = detection["center"]
@@ -970,19 +1031,36 @@ def main() -> None:
                                 "bg_lab_l": round(float(detection.get("bg_lab_l", 0.0)), 2),
                                 "v_bg_ratio": round(float(detection.get("v_bg_ratio", 0.0)), 4),
                                 "l_bg_delta": round(float(detection.get("l_bg_delta", 0.0)), 2),
+                                "decision_rule": str(diagnostics["decision_rule"]),
+                                "external_count": int(diagnostics["external_count"]),
+                                "total_holes": int(diagnostics["total_holes"]),
+                                "max_holes_single": int(diagnostics["max_holes_single"]),
+                                "clean_single_ring": bool(diagnostics["clean_single_ring"]),
+                                "blob_probability": round(float(diagnostics["blob_probability"]), 4),
+                                "ml_raw_label": str(diagnostics["ml_raw_label"]),
+                                "classify_ms": round(float(classify_ms), 3),
                             }
                         )
 
                         print(
-                            "FINAL ID %d | %s | x=%d y=%d"
+                            "FINAL ID %d | %s | rule=%s | ml=%s | blob_p=%.3f | "
+                            "ext=%d holes=%d max_holes=%d | %.2f ms | x=%d y=%d"
                             % (
                                 track_id,
                                 label,
+                                diagnostics["decision_rule"],
+                                diagnostics["ml_raw_label"],
+                                float(diagnostics["blob_probability"]),
+                                int(diagnostics["external_count"]),
+                                int(diagnostics["total_holes"]),
+                                int(diagnostics["max_holes_single"]),
+                                classify_ms,
                                 int(cx),
                                 int(cy),
                             )
                         )
 
+                draw_start = time.perf_counter()
                 last_output = draw_overlay(
                     frame,
                     tracked,
@@ -992,7 +1070,15 @@ def main() -> None:
                     source_fps,
                     float(settings["speed_pct"]),
                 )
+                profile_samples["draw"].append(
+                    (time.perf_counter() - draw_start) * 1000.0
+                )
+
+                imshow_start = time.perf_counter()
                 cv2.imshow(WINDOW_VIDEO, last_output)
+                profile_samples["imshow"].append(
+                    (time.perf_counter() - imshow_start) * 1000.0
+                )
 
                 if bool(settings["show_mask"]):
                     if not mask_visible:
@@ -1023,6 +1109,24 @@ def main() -> None:
     finally:
         capture.release()
         cv2.destroyAllWindows()
+
+        print("")
+        print("PROFILO PRESTAZIONI (ms)")
+        for stage in PROFILE_STAGES:
+            values = profile_samples.get(stage, [])
+            if not values:
+                continue
+            arr = np.asarray(values, dtype=np.float64)
+            print(
+                "%-9s p50=%6.2f  p95=%6.2f  p99=%6.2f  n=%d"
+                % (
+                    stage,
+                    float(np.percentile(arr, 50)),
+                    float(np.percentile(arr, 95)),
+                    float(np.percentile(arr, 99)),
+                    len(values),
+                )
+            )
 
         csv_path, summary_path = write_final_report(
             report_rows,
