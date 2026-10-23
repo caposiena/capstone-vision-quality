@@ -12,11 +12,11 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 SEGMENTATION_CONFIG_PATH = PROJECT_ROOT / "models" / "opencv_segmentation.json"
 
 DEFAULT_SEGMENTATION = {
-    "r_margin": 10,
-    "g_margin": 4,
-    "sat_min": 18,
-    "val_min": 45,
-    "min_component_area": 120,
+    "blue_margin": 10,
+    "hue_low": 85,
+    "hue_high": 135,
+    "sat_min": 55,
+    "min_component_area": 90,
 }
 
 
@@ -41,24 +41,36 @@ def build_product_mask(
     image: np.ndarray,
     params: dict[str, int] | None = None,
 ) -> np.ndarray:
-    """Single canonical product mask used by calibration, training and runtime."""
+    """Segmenta il prodotto sottraendo il fondo blu del nastro.
+
+    Il prodotto puo essere chiaro, scuro o molto cotto; il criterio primario
+    e quindi il colore stabile del fondo, non il colore assoluto del tarallo.
+    """
     cfg = SEGMENTATION if params is None else params
 
     blurred = cv2.GaussianBlur(image, (3, 3), 0)
-    b, g, r = cv2.split(blurred)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+    b, g, r = cv2.split(blurred)
 
     b16 = b.astype(np.int16)
     g16 = g.astype(np.int16)
     r16 = r.astype(np.int16)
 
-    raw = (
-        (r16 > b16 + int(cfg["r_margin"]))
-        & (g16 > b16 + int(cfg["g_margin"]))
-        & (hsv[:, :, 1] >= int(cfg["sat_min"]))
-        & (hsv[:, :, 2] >= int(cfg["val_min"]))
-    ).astype(np.uint8) * 255
+    hue = hsv[:, :, 0]
+    sat = hsv[:, :, 1]
 
+    blue_background = (
+        (hue >= int(cfg["hue_low"]))
+        & (hue <= int(cfg["hue_high"]))
+        & (sat >= int(cfg["sat_min"]))
+        & (b16 >= g16 + int(cfg["blue_margin"]))
+        & (b16 >= r16 + int(cfg["blue_margin"]))
+    )
+
+    # Il prodotto e tutto cio che non appartiene con buona confidenza al fondo blu.
+    raw = (~blue_background).astype(np.uint8) * 255
+
+    # Rimuove bordi/rumore sottile senza unire prodotti vicini.
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     opened = cv2.morphologyEx(raw, cv2.MORPH_OPEN, kernel)
 
