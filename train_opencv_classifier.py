@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import zlib
 from pathlib import Path
 
 import cv2
@@ -130,20 +131,66 @@ def main() -> None:
     x = np.asarray(samples, dtype=np.float32)
     y = np.asarray(targets, dtype=np.int32)
 
-    # Split deterministico 80/20 per classe.
+    # Holdout per IMMAGINE: tutti gli oggetti della stessa foto finiscono
+    # nello stesso split. Evita una validazione artificialmente ottimistica.
     train_idx = []
     test_idx = []
-    for class_id in sorted(set(y.tolist())):
-        idx = np.where(y == class_id)[0]
-        idx = np.asarray(sorted(idx, key=lambda i: source_keys[int(i)]))
-        cut = max(1, int(len(idx) * 0.80))
-        train_idx.extend(idx[:cut].tolist())
-        test_idx.extend(idx[cut:].tolist())
 
-    x_train = x[train_idx]
-    y_train = y[train_idx]
+    for i, key in enumerate(source_keys):
+        image_key = key.split(":", 1)[0]
+        bucket = zlib.crc32(image_key.encode("utf-8")) % 5
+        if bucket == 0:
+            test_idx.append(i)
+        else:
+            train_idx.append(i)
+
+    # Garantisce che tutte le classi siano presenti nel test; se una manca,
+    # sposta un campione di quella classe dal train.
+    for class_id in sorted(set(y.tolist())):
+        if not any(int(y[i]) == class_id for i in test_idx):
+            candidate = next(
+                (i for i in train_idx if int(y[i]) == class_id),
+                None,
+            )
+            if candidate is not None:
+                train_idx.remove(candidate)
+                test_idx.append(candidate)
+
+    x_train_raw = x[train_idx]
+    y_train_raw = y[train_idx]
     x_test = x[test_idx]
     y_test = y[test_idx]
+
+    # Bilanciamento semplice: replica le classi minoritarie fino alla numerosita
+    # della classe piu rappresentata. Utile soprattutto per blob/rotto.
+    class_counts = {
+        class_id: int(np.sum(y_train_raw == class_id))
+        for class_id in sorted(set(y_train_raw.tolist()))
+    }
+    target_count = max(class_counts.values())
+
+    balanced_x = []
+    balanced_y = []
+
+    for class_id, count in class_counts.items():
+        class_x = x_train_raw[y_train_raw == class_id]
+        repeats = target_count // count
+        remainder = target_count % count
+
+        if repeats > 0:
+            balanced_x.append(np.tile(class_x, (repeats, 1)))
+            balanced_y.append(
+                np.full((count * repeats,), class_id, dtype=np.int32)
+            )
+
+        if remainder > 0:
+            balanced_x.append(class_x[:remainder])
+            balanced_y.append(
+                np.full((remainder,), class_id, dtype=np.int32)
+            )
+
+    x_train = np.vstack(balanced_x).astype(np.float32)
+    y_train = np.concatenate(balanced_y).astype(np.int32)
 
     model = cv2.ml.RTrees_create()
     model.setMaxDepth(14)
@@ -177,7 +224,8 @@ def main() -> None:
                 "feature_count": int(x.shape[1]),
                 "class_names": names,
                 "samples": int(len(y)),
-                "train_samples": int(len(y_train)),
+                "train_samples_raw": int(len(y_train_raw)),
+                "train_samples_balanced": int(len(y_train)),
                 "test_samples": int(len(y_test)),
                 "validation_accuracy": accuracy,
                 "confusion_matrix": confusion.tolist(),
