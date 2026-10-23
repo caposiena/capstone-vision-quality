@@ -304,7 +304,12 @@ def contour_features(
 def detect_taralli(
     frame: np.ndarray,
     settings: dict[str, float | bool],
-) -> tuple[list[dict[str, object]], np.ndarray, tuple[int, int, int, int]]:
+) -> tuple[
+    list[dict[str, object]],
+    np.ndarray,
+    tuple[int, int, int, int],
+    dict[str, int],
+]:
     h, w = frame.shape[:2]
 
     x1 = int(w * float(settings["roi_left"]) / 100.0)
@@ -344,16 +349,25 @@ def detect_taralli(
     max_area = roi_area * 0.20
 
     features: list[dict[str, object]] = []
+    excluded_area = {
+        "too_small": 0,
+        "too_large": 0,
+    }
+
     for contour in contours:
         area = float(cv2.contourArea(contour))
-        if area < min_area or area > max_area:
+        if area < min_area:
+            excluded_area["too_small"] += 1
+            continue
+        if area > max_area:
+            excluded_area["too_large"] += 1
             continue
         features.append(contour_features(contour, frame, mask, x1, y1))
 
     # Prima della deadline OpenCV segmenta e traccia.
     # La classe viene assegnata una sola volta sul frame di crossing.
 
-    return features, mask, (x1, y1, x2, y2)
+    return features, mask, (x1, y1, x2, y2), excluded_area
 
 
 def analyze_ring_topology(crop: np.ndarray) -> tuple[int, int, int]:
@@ -614,6 +628,7 @@ class CentroidTracker:
     def __init__(self) -> None:
         self.next_id = 1
         self.tracks: dict[int, dict[str, object]] = {}
+        self.expired_without_verdict = 0
 
     def _new_track(self, detection: dict[str, object], frame_index: int) -> int:
         track_id = self.next_id
@@ -694,6 +709,8 @@ class CentroidTracker:
                     expired.append(track_id)
 
         for track_id in expired:
+            if self.tracks[track_id].get("final_label") is None:
+                self.expired_without_verdict += 1
             del self.tracks[track_id]
 
         return results
@@ -927,8 +944,10 @@ def main() -> None:
 
     report_rows: list[dict[str, object]] = []
     profile_samples: dict[str, list[float]] = defaultdict(list)
-    excluded_large_objects = 0
-    tracks_without_verdict = 0
+    excluded_area_totals = {
+        "too_small": 0,
+        "too_large": 0,
+    }
 
     frame_index = 0
     processing_fps = 0.0
@@ -959,7 +978,13 @@ def main() -> None:
                 analysis_start = time.perf_counter()
 
                 detect_start = time.perf_counter()
-                detections, mask, roi = detect_taralli(frame, settings)
+                detections, mask, roi, excluded_area = detect_taralli(
+                    frame,
+                    settings,
+                )
+                excluded_area_totals["too_small"] += excluded_area["too_small"]
+                excluded_area_totals["too_large"] += excluded_area["too_large"]
+
                 profile_samples["detect"].append(
                     (time.perf_counter() - detect_start) * 1000.0
                 )
@@ -1127,6 +1152,21 @@ def main() -> None:
                     len(values),
                 )
             )
+
+        print("")
+        print("COPERTURA / ESCLUSIONI")
+        print(
+            "Track terminati senza verdetto:",
+            tracker.expired_without_verdict,
+        )
+        print(
+            "Contorni esclusi per area piccola:",
+            excluded_area_totals["too_small"],
+        )
+        print(
+            "Contorni esclusi per area grande:",
+            excluded_area_totals["too_large"],
+        )
 
         csv_path, summary_path = write_final_report(
             report_rows,
