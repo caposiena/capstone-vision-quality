@@ -79,23 +79,30 @@ def extract_features(crop: np.ndarray) -> np.ndarray:
     )
 
     contour_areas = [float(cv2.contourArea(c)) for c in contours]
-    significant = [
-        (c, area)
-        for c, area in zip(contours, contour_areas)
-        if area >= max(20.0, crop.shape[0] * crop.shape[1] * 0.01)
-    ]
+    min_geom_area = max(20.0, crop.shape[0] * crop.shape[1] * 0.01)
 
-    component_count = 0.0
+    external = []
     hole_count = 0.0
+
+    if hierarchy is not None:
+        for idx, contour in enumerate(contours):
+            area = contour_areas[idx]
+            parent = int(hierarchy[0][idx][3])
+
+            if parent < 0 and area >= min_geom_area:
+                external.append((contour, area))
+            elif parent >= 0 and area >= 10.0:
+                hole_count += 1.0
+
+    component_count = float(len(external))
     circularity = 0.0
     solidity = 0.0
     extent = 0.0
     aspect = 0.0
     largest_ratio = 0.0
 
-    if significant:
-        largest_contour, largest_area = max(significant, key=lambda item: item[1])
-        component_count = float(len(significant))
+    if external:
+        largest_contour, largest_area = max(external, key=lambda item: item[1])
 
         perimeter = float(cv2.arcLength(largest_contour, True))
         circularity = (
@@ -112,11 +119,6 @@ def extract_features(crop: np.ndarray) -> np.ndarray:
         extent = largest_area / float(max(1, w * h_box))
         aspect = float(w) / float(max(1, h_box))
         largest_ratio = largest_area / float(max(1, crop.shape[0] * crop.shape[1]))
-
-        if hierarchy is not None:
-            for idx, item in enumerate(hierarchy[0]):
-                if int(item[3]) >= 0 and contour_areas[idx] >= 10.0:
-                    hole_count += 1.0
 
     occupancy = float(np.count_nonzero(mask)) / float(max(1, mask.size))
 
