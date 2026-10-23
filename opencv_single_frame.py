@@ -478,46 +478,9 @@ def detect_taralli(
             continue
         features.append(contour_features(contour, frame, mask, x1, y1))
 
-    areas = [float(item["area"]) for item in features]
-    reference_area = float(np.median(areas)) if areas else None
-
-    # Riferimento cromatico del frame costruito solo su sagome plausibilmente
-    # singole e sane. Evita che blob/rotti contaminino la calibrazione.
-    color_candidates = []
-    for item in features:
-        area = float(item["area"])
-        circularity = float(item["circularity"])
-        solidity = float(item["solidity"])
-        aspect = float(item["aspect"])
-
-        normal_size = (
-            reference_area is not None
-            and 0.60 * reference_area <= area <= 1.35 * reference_area
-        )
-        normal_shape = (
-            circularity >= GOOD_MIN_CIRCULARITY
-            and solidity >= GOOD_MIN_SOLIDITY
-            and GOOD_MIN_ASPECT <= aspect <= GOOD_MAX_ASPECT
-        )
-
-        if normal_size and normal_shape:
-            color_candidates.append(item)
-
-    color_reference = None
-    if color_candidates:
-        color_reference = {
-            "v": float(np.median([float(i["v"]) for i in color_candidates])),
-            "lab_l": float(
-                np.median([float(i["lab_l"]) for i in color_candidates])
-            ),
-        }
-
-    for item in features:
-        item["label"] = classify(
-            item,
-            reference_area,
-            color_reference,
-        )
+    # Nessuna classificazione qui: prima della deadline OpenCV deve solo
+    # segmentare e tracciare. La classe viene assegnata una sola volta
+    # dal modello RTrees sul frame di crossing.
 
     return features, mask, (x1, y1, x2, y2)
 
