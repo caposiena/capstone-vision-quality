@@ -40,8 +40,8 @@ POCO_MAX_S = 105.0
 
 # Colorimetria relativa al frame: evita che la sola illuminazione faccia
 # diventare "poco" un tarallo normalmente cotto.
-POCO_MIN_V_MARGIN = 14.0
-POCO_MIN_LAB_L_MARGIN = 10.0
+POCO_MIN_V_MARGIN = 7.0
+POCO_MIN_LAB_L_MARGIN = 6.0
 COTTO_MIN_V_MARGIN = 12.0
 COTTO_MIN_LAB_L_MARGIN = 10.0
 
@@ -101,24 +101,27 @@ def get_settings() -> dict[str, float | bool]:
 
 
 def build_mask(roi: np.ndarray) -> np.ndarray:
-    """Riduce il ROI a silhouette binarie e separa, quando possibile, oggetti a contatto."""
+    """Silhouette dei soli pixel caldi del prodotto, evitando ponti tra vicini."""
     blurred = cv2.GaussianBlur(roi, (3, 3), 0)
     b, g, r = cv2.split(blurred)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
 
     b16 = b.astype(np.int16)
     g16 = g.astype(np.int16)
     r16 = r.astype(np.int16)
 
-    blue_background = (
-        (b16 > g16 + BLUE_DOMINANCE)
-        & (b16 > r16 + BLUE_DOMINANCE)
+    warm_product = (
+        (r16 > b16 + 10)
+        & (g16 > b16 + 4)
+        & (hsv[:, :, 1] >= 18)
+        & (hsv[:, :, 2] >= 45)
     )
 
-    mask = ((~blue_background).astype(np.uint8) * 255)
+    mask = (warm_product.astype(np.uint8) * 255)
 
+    # Solo apertura: la chiusura tendeva a creare ponti fra taralli vicini.
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
 
     count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
     cleaned = np.zeros_like(mask)
@@ -129,6 +132,7 @@ def build_mask(roi: np.ndarray) -> np.ndarray:
             cleaned[labels == label_id] = 255
 
     return cleaned
+
 
 
 def split_touching_objects(mask: np.ndarray) -> np.ndarray:
@@ -211,6 +215,7 @@ def split_touching_objects(mask: np.ndarray) -> np.ndarray:
 def contour_features(
     contour: np.ndarray,
     frame: np.ndarray,
+    binary_mask: np.ndarray,
     offset_x: int,
     offset_y: int,
 ) -> dict[str, object]:
@@ -238,11 +243,19 @@ def contour_features(
     cy = (y1 + y2) // 2
 
     crop = frame[y1:y2, x1:x2]
-    local_mask = np.zeros((h, w), dtype=np.uint8)
-    shifted = contour.copy()
-    shifted[:, 0, 0] -= x
-    shifted[:, 0, 1] -= y
-    cv2.drawContours(local_mask, [shifted], -1, 255, -1)
+    local_mask = binary_mask[y:y + h, x:x + w].copy()
+
+    # Numero di fori chiusi nella silhouette.
+    # 1 foro -> tarallo normale; >=2 -> probabile gruppo/blob; 0 -> possibile rotto.
+    _hole_contours, hierarchy = cv2.findContours(
+        local_mask,
+        cv2.RETR_CCOMP,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    hole_count = 0
+    if hierarchy is not None:
+        hierarchy_row = hierarchy[0]
+        hole_count = sum(1 for item in hierarchy_row if int(item[3]) >= 0)
 
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
     lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
@@ -267,6 +280,7 @@ def contour_features(
         "v": median_v,
         "s": median_s,
         "lab_l": median_lab_l,
+        "holes": hole_count,
     }
 
 
@@ -283,8 +297,13 @@ def classify(
     median_v = float(features["v"])
     median_s = float(features["s"])
     median_lab_l = float(features["lab_l"])
+    hole_count = int(features.get("holes", 0))
 
-    # 1) ROTTO: richiede piu segnali geometrici simultanei.
+    # 1) BLOB: due o piu fori chiusi sono un segnale diretto di gruppo.
+    if hole_count >= 2:
+        return "blob"
+
+    # 2) ROTTO: richiede piu segnali geometrici simultanei.
     shape_signals = 0
     if circularity < ROTTO_MAX_CIRCULARITY:
         shape_signals += 1
@@ -293,6 +312,8 @@ def classify(
     if aspect < ROTTO_MIN_ASPECT or aspect > ROTTO_MAX_ASPECT:
         shape_signals += 1
     if extent < ROTTO_MAX_EXTENT:
+        shape_signals += 1
+    if hole_count == 0:
         shape_signals += 1
 
     # Un oggetto molto grande ma con geometria coerente non viene subito
@@ -327,8 +348,10 @@ def classify(
     )
     poco_relative = (
         color_reference is not None
-        and median_v >= ref_v + POCO_MIN_V_MARGIN
-        and median_lab_l >= ref_l + POCO_MIN_LAB_L_MARGIN
+        and (
+            median_v >= ref_v + POCO_MIN_V_MARGIN
+            or median_lab_l >= ref_l + POCO_MIN_LAB_L_MARGIN
+        )
     )
 
     if cotto_absolute and cotto_relative:
@@ -343,6 +366,7 @@ def classify(
         and solidity >= GOOD_MIN_SOLIDITY
         and GOOD_MIN_ASPECT <= aspect <= GOOD_MAX_ASPECT
         and extent >= GOOD_MIN_EXTENT
+        and hole_count == 1
     )
 
     if good_geometry:
@@ -387,7 +411,7 @@ def detect_taralli(
         area = float(cv2.contourArea(contour))
         if area < min_area or area > max_area:
             continue
-        features.append(contour_features(contour, frame, x1, y1))
+        features.append(contour_features(contour, frame, mask, x1, y1))
 
     areas = [float(item["area"]) for item in features]
     reference_area = float(np.median(areas)) if areas else None
@@ -642,6 +666,7 @@ def write_final_report(
         "v_median",
         "s_median",
         "lab_l_median",
+        "holes",
     ]
 
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
@@ -780,6 +805,7 @@ def main() -> None:
                                 "v_median": round(float(detection["v"]), 2),
                                 "s_median": round(float(detection["s"]), 2),
                                 "lab_l_median": round(float(detection["lab_l"]), 2),
+                                "holes": int(detection.get("holes", 0)),
                             }
                         )
 
