@@ -471,7 +471,6 @@ class CentroidTracker:
             "center": (int(cx), int(cy)),
             "prev_center": None,
             "bbox": detection["bbox"],
-            "label": detection["label"],
             "final_label": None,
             "last_seen": frame_index,
             "missed": 0,
@@ -511,7 +510,6 @@ class CentroidTracker:
                 track["prev_center"] = track["center"]
                 track["center"] = (int(dcx), int(dcy))
                 track["bbox"] = detection["bbox"]
-                track["label"] = detection["label"]
                 track["last_seen"] = frame_index
                 track["missed"] = 0
 
@@ -530,9 +528,7 @@ class CentroidTracker:
                     track["final_label"] = str(detection["label"])
 
             display_detection = dict(detection)
-            display_detection["display_label"] = (
-                track["final_label"] if track["final_label"] else detection["label"]
-            )
+            display_detection["display_label"] = track["final_label"]
             results.append((best_id, display_detection, crossed))
 
         # Invecchiamento track non osservati.
@@ -577,22 +573,26 @@ def draw_overlay(
     counts = {name: 0 for name in CLASS_COLORS}
 
     for track_id, detection, _crossed in tracked:
-        label = str(detection["display_label"])
-        counts[label] = counts.get(label, 0) + 1
+        final_label = detection.get("display_label")
 
         bx1, by1, bx2, by2 = detection["bbox"]
         cx, cy = detection["center"]
-        color = CLASS_COLORS.get(label, (200, 200, 200))
+
+        if final_label:
+            label = str(final_label)
+            counts[label] = counts.get(label, 0) + 1
+            color = CLASS_COLORS.get(label, (200, 200, 200))
+            text = "#%d %s FINAL" % (track_id, label.upper())
+        else:
+            color = (180, 180, 180)
+            text = "#%d TRACK" % track_id
 
         cv2.rectangle(output, (bx1, by1), (bx2, by2), color, 2)
         cv2.circle(output, (int(cx), int(cy)), 3, color, -1)
 
-        track = tracker.tracks.get(track_id)
-        state = "FINAL" if track and track.get("final_label") else "LIVE"
-
         cv2.putText(
             output,
-            "#%d %s %s" % (track_id, label.upper(), state),
+            text,
             (bx1, max(18, by1 - 6)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.52,
@@ -740,7 +740,7 @@ def main() -> None:
 
     print("Video:", video_path)
     print("FPS sorgente:", source_fps)
-    print("Pipeline: OpenCV puro | analisi continua | deadline | nessun YOLO")
+    print("Pipeline: OpenCV puro | tracking continuo | decisione SINGLE-FRAME alla deadline")
     print("Tasti: SPAZIO pausa | M maschera | Q/ESC uscita")
 
     try:
@@ -781,7 +781,9 @@ def main() -> None:
 
                 for track_id, detection, crossed in tracked:
                     if crossed:
-                        label = str(detection["display_label"])
+                        label = str(detection["label"])
+                        tracker.tracks[track_id]["final_label"] = label
+                        detection["display_label"] = label
                         cx, cy = detection["center"]
                         bx1, by1, bx2, by2 = detection["bbox"]
 
