@@ -3,10 +3,13 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-FEATURE_VERSION = 1
+FEATURE_VERSION = 2
+
+MIN_COMPONENT_AREA = 120
 
 
-def warm_mask(image: np.ndarray) -> np.ndarray:
+def build_product_mask(image: np.ndarray) -> np.ndarray:
+    """Single canonical product mask used by training and runtime."""
     blurred = cv2.GaussianBlur(image, (3, 3), 0)
     b, g, r = cv2.split(blurred)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
@@ -15,15 +18,58 @@ def warm_mask(image: np.ndarray) -> np.ndarray:
     g16 = g.astype(np.int16)
     r16 = r.astype(np.int16)
 
-    mask = (
-        (r16 > b16 + 8)
-        & (g16 > b16 + 2)
-        & (hsv[:, :, 1] >= 12)
-        & (hsv[:, :, 2] >= 35)
+    raw = (
+        (r16 > b16 + 10)
+        & (g16 > b16 + 4)
+        & (hsv[:, :, 1] >= 18)
+        & (hsv[:, :, 2] >= 45)
     ).astype(np.uint8) * 255
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
-    return cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    opened = cv2.morphologyEx(raw, cv2.MORPH_OPEN, kernel)
+
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(opened, 8)
+    if count <= 1:
+        return np.zeros_like(opened)
+
+    keep = np.zeros(count, dtype=np.uint8)
+    keep[1:] = (
+        stats[1:, cv2.CC_STAT_AREA] >= MIN_COMPONENT_AREA
+    ).astype(np.uint8) * 255
+    return keep[labels]
+
+
+def crop_object(
+    image: np.ndarray,
+    bbox: tuple[int, int, int, int],
+    pad_frac: float = 0.06,
+) -> np.ndarray:
+    x1, y1, x2, y2 = bbox
+    h, w = image.shape[:2]
+
+    pad_x = max(2, int((x2 - x1) * pad_frac))
+    pad_y = max(2, int((y2 - y1) * pad_frac))
+
+    return image[
+        max(0, y1 - pad_y):min(h, y2 + pad_y),
+        max(0, x1 - pad_x):min(w, x2 + pad_x),
+    ]
+
+
+def count_holes(local_mask: np.ndarray, min_hole_px: int = 10) -> int:
+    contours, hierarchy = cv2.findContours(
+        local_mask,
+        cv2.RETR_CCOMP,
+        cv2.CHAIN_APPROX_SIMPLE,
+    )
+    if hierarchy is None:
+        return 0
+
+    holes = 0
+    for contour, item in zip(contours, hierarchy[0]):
+        if int(item[3]) >= 0 and cv2.contourArea(contour) >= min_hole_px:
+            holes += 1
+    return holes
 
 
 def _hist(values: np.ndarray, bins: int, max_value: float) -> list[float]:
@@ -41,10 +87,9 @@ def extract_features(crop: np.ndarray) -> np.ndarray:
     if crop is None or crop.size == 0:
         return np.zeros((1, 59), dtype=np.float32)
 
-    mask = warm_mask(crop)
+    mask = build_product_mask(crop)
     valid = mask > 0
 
-    # Fallback prudente: se la segmentazione fallisce, usa l'intero crop.
     if np.count_nonzero(valid) < 20:
         valid = np.ones(mask.shape, dtype=bool)
 
@@ -71,7 +116,6 @@ def extract_features(crop: np.ndarray) -> np.ndarray:
             float(np.percentile(values, 90)),
         ]
 
-    # Geometria della silhouette.
     contours, hierarchy = cv2.findContours(
         mask,
         cv2.RETR_CCOMP,
@@ -115,7 +159,7 @@ def extract_features(crop: np.ndarray) -> np.ndarray:
         hull_area = float(cv2.contourArea(hull))
         solidity = largest_area / hull_area if hull_area > 0 else 0.0
 
-        x, y, w, h_box = cv2.boundingRect(largest_contour)
+        _x, _y, w, h_box = cv2.boundingRect(largest_contour)
         extent = largest_area / float(max(1, w * h_box))
         aspect = float(w) / float(max(1, h_box))
         largest_ratio = largest_area / float(max(1, crop.shape[0] * crop.shape[1]))
@@ -148,5 +192,4 @@ def extract_features(crop: np.ndarray) -> np.ndarray:
         largest_ratio,
     ]
 
-    arr = np.asarray(vector, dtype=np.float32).reshape(1, -1)
-    return arr
+    return np.asarray(vector, dtype=np.float32).reshape(1, -1)
