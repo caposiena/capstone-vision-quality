@@ -38,6 +38,13 @@ POCO_MIN_V = 212.0
 POCO_MIN_LAB_L = 198.0
 POCO_MAX_S = 105.0
 
+# Colorimetria relativa al frame: evita che la sola illuminazione faccia
+# diventare "poco" un tarallo normalmente cotto.
+POCO_MIN_V_MARGIN = 14.0
+POCO_MIN_LAB_L_MARGIN = 10.0
+COTTO_MIN_V_MARGIN = 12.0
+COTTO_MIN_LAB_L_MARGIN = 10.0
+
 ROTTO_MAX_CIRCULARITY = 0.62
 ROTTO_MAX_SOLIDITY = 0.88
 ROTTO_MIN_ASPECT = 0.72
@@ -125,40 +132,79 @@ def build_mask(roi: np.ndarray) -> np.ndarray:
 
 
 def split_touching_objects(mask: np.ndarray) -> np.ndarray:
-    """Usa distance transform + watershed per separare taralli che si toccano."""
-    if cv2.countNonZero(mask) == 0:
+    """Separa i gruppi lavorando componente per componente.
+
+    Il precedente watershed usava una soglia globale e poteva lasciare uniti
+    due/tre taralli vicini. Qui ogni componente grande ha la propria distance
+    transform e la propria soglia locale.
+    """
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    if count <= 1:
         return mask
 
-    dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
-    max_value = float(dist.max())
-    if max_value <= 0.0:
+    component_areas = [
+        int(stats[i, cv2.CC_STAT_AREA])
+        for i in range(1, count)
+        if int(stats[i, cv2.CC_STAT_AREA]) >= MIN_COMPONENT_AREA
+    ]
+    if not component_areas:
         return mask
 
-    sure_fg = np.uint8(dist > (0.38 * max_value)) * 255
-    sure_fg = cv2.morphologyEx(
-        sure_fg,
-        cv2.MORPH_OPEN,
-        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
-    )
+    median_area = float(np.median(component_areas))
+    output = np.zeros_like(mask)
 
-    components, markers = cv2.connectedComponents(sure_fg)
-    if components <= 2:
-        return mask
+    for label_id in range(1, count):
+        area = int(stats[label_id, cv2.CC_STAT_AREA])
+        if area < MIN_COMPONENT_AREA:
+            continue
 
-    unknown = cv2.subtract(mask, sure_fg)
-    markers = markers + 1
-    markers[unknown == 255] = 0
+        component = np.uint8(labels == label_id) * 255
 
-    canvas = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
-    markers = cv2.watershed(canvas, markers.astype(np.int32))
+        # Un componente di dimensione normale viene mantenuto com'e.
+        if area < median_area * 1.35:
+            output = cv2.bitwise_or(output, component)
+            continue
 
-    separated = np.zeros_like(mask)
-    for marker_id in range(2, int(markers.max()) + 1):
-        component = np.uint8(markers == marker_id) * 255
-        if cv2.countNonZero(component) >= MIN_COMPONENT_AREA:
-            separated = cv2.bitwise_or(separated, component)
+        dist = cv2.distanceTransform(component, cv2.DIST_L2, 5)
+        local_max = float(dist.max())
+        if local_max <= 0.0:
+            output = cv2.bitwise_or(output, component)
+            continue
 
-    return separated if cv2.countNonZero(separated) else mask
+        # Semi interni piu selettivi per distinguere anelli adiacenti.
+        sure_fg = np.uint8(dist >= (0.48 * local_max)) * 255
+        sure_fg = cv2.morphologyEx(
+            sure_fg,
+            cv2.MORPH_OPEN,
+            cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+        )
+
+        seeds, markers = cv2.connectedComponents(sure_fg)
+
+        # Se non emergono almeno due nuclei reali, non forziamo lo split.
+        if seeds <= 2:
+            output = cv2.bitwise_or(output, component)
+            continue
+
+        unknown = cv2.subtract(component, sure_fg)
+        markers = markers + 1
+        markers[unknown == 255] = 0
+
+        canvas = cv2.cvtColor(component, cv2.COLOR_GRAY2BGR)
+        markers = cv2.watershed(canvas, markers.astype(np.int32))
+
+        pieces = 0
+        for marker_id in range(2, int(markers.max()) + 1):
+            piece = np.uint8(markers == marker_id) * 255
+            piece_area = cv2.countNonZero(piece)
+            if piece_area >= max(MIN_COMPONENT_AREA, int(median_area * 0.35)):
+                output = cv2.bitwise_or(output, piece)
+                pieces += 1
+
+        if pieces < 2:
+            output = cv2.bitwise_or(output, component)
+
+    return output
 
 
 
@@ -224,7 +270,11 @@ def contour_features(
     }
 
 
-def classify(features: dict[str, object], reference_area: float | None) -> str:
+def classify(
+    features: dict[str, object],
+    reference_area: float | None,
+    color_reference: dict[str, float] | None,
+) -> str:
     area = float(features["area"])
     circularity = float(features["circularity"])
     solidity = float(features["solidity"])
@@ -234,11 +284,7 @@ def classify(features: dict[str, object], reference_area: float | None) -> str:
     median_s = float(features["s"])
     median_lab_l = float(features["lab_l"])
 
-    # 1) BLOB: prima verifichiamo la dimensione anomala.
-    if reference_area and area > reference_area * BLOB_AREA_FACTOR:
-        return "blob"
-
-    # 2) ROTTO: richiede piu segnali geometrici simultanei.
+    # 1) ROTTO: richiede piu segnali geometrici simultanei.
     shape_signals = 0
     if circularity < ROTTO_MAX_CIRCULARITY:
         shape_signals += 1
@@ -249,28 +295,49 @@ def classify(features: dict[str, object], reference_area: float | None) -> str:
     if extent < ROTTO_MAX_EXTENT:
         shape_signals += 1
 
+    # Un oggetto molto grande ma con geometria coerente non viene subito
+    # chiamato blob: prima deve risultare davvero un componente multiplo.
+    if reference_area and area > reference_area * BLOB_AREA_FACTOR:
+        if area > reference_area * 1.85 or shape_signals >= 1:
+            return "blob"
+
     if shape_signals >= ROTTO_MIN_SIGNALS:
         return "rotto"
 
-    # 3) Firma cromatica esplicita.
-    cotto_color = (
+    # 2) Firma cromatica: assoluta + relativa ai taralli geometricamente
+    # normali dello stesso frame. Questo rende POCO molto piu prudente.
+    ref_v = color_reference["v"] if color_reference else 0.0
+    ref_l = color_reference["lab_l"] if color_reference else 0.0
+
+    cotto_absolute = (
         median_v <= COTTO_MAX_V
         and median_lab_l <= COTTO_MAX_LAB_L
         and median_s >= COTTO_MIN_S
     )
-    poco_color = (
+    cotto_relative = (
+        color_reference is not None
+        and median_v <= ref_v - COTTO_MIN_V_MARGIN
+        and median_lab_l <= ref_l - COTTO_MIN_LAB_L_MARGIN
+    )
+
+    poco_absolute = (
         median_v >= POCO_MIN_V
         and median_lab_l >= POCO_MIN_LAB_L
         and median_s <= POCO_MAX_S
     )
+    poco_relative = (
+        color_reference is not None
+        and median_v >= ref_v + POCO_MIN_V_MARGIN
+        and median_lab_l >= ref_l + POCO_MIN_LAB_L_MARGIN
+    )
 
-    if cotto_color:
+    if cotto_absolute and cotto_relative:
         return "cotto"
 
-    if poco_color:
+    if poco_absolute and poco_relative:
         return "poco"
 
-    # 4) BUONO: firma geometrica esplicita + colore non estremo.
+    # 3) Firma geometrica esplicita del BUONO.
     good_geometry = (
         circularity >= GOOD_MIN_CIRCULARITY
         and solidity >= GOOD_MIN_SOLIDITY
@@ -281,8 +348,6 @@ def classify(features: dict[str, object], reference_area: float | None) -> str:
     if good_geometry:
         return "buono"
 
-    # Caso intermedio: per prudenza resta buono, ma solo dopo aver escluso
-    # segnali forti di blob/rotto/cotto/poco.
     return "buono"
 
 
@@ -327,8 +392,43 @@ def detect_taralli(
     areas = [float(item["area"]) for item in features]
     reference_area = float(np.median(areas)) if areas else None
 
+    # Riferimento cromatico del frame costruito solo su sagome plausibilmente
+    # singole e sane. Evita che blob/rotti contaminino la calibrazione.
+    color_candidates = []
     for item in features:
-        item["label"] = classify(item, reference_area)
+        area = float(item["area"])
+        circularity = float(item["circularity"])
+        solidity = float(item["solidity"])
+        aspect = float(item["aspect"])
+
+        normal_size = (
+            reference_area is not None
+            and 0.60 * reference_area <= area <= 1.35 * reference_area
+        )
+        normal_shape = (
+            circularity >= GOOD_MIN_CIRCULARITY
+            and solidity >= GOOD_MIN_SOLIDITY
+            and GOOD_MIN_ASPECT <= aspect <= GOOD_MAX_ASPECT
+        )
+
+        if normal_size and normal_shape:
+            color_candidates.append(item)
+
+    color_reference = None
+    if color_candidates:
+        color_reference = {
+            "v": float(np.median([float(i["v"]) for i in color_candidates])),
+            "lab_l": float(
+                np.median([float(i["lab_l"]) for i in color_candidates])
+            ),
+        }
+
+    for item in features:
+        item["label"] = classify(
+            item,
+            reference_area,
+            color_reference,
+        )
 
     return features, mask, (x1, y1, x2, y2)
 
