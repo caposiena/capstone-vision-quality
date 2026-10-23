@@ -29,17 +29,31 @@ MIN_COMPONENT_AREA = 120
 TRACK_MAX_DISTANCE = 85.0
 TRACK_MAX_MISSED = 10
 
-# Soglie iniziali ricavate dalla logica del prototipo OpenCV osservato:
-# geometria/area per rotto e blob; luminosita HSV V per cotto/poco.
-DARK_V = 150.0
-LIGHT_V = 220.0
-BLOB_AREA_FACTOR = 1.65
-ROTTO_MAX_CIRCULARITY = 0.55
-ROTTO_MAX_SOLIDITY = 0.86
-ROTTO_MIN_ASPECT = 0.70
-ROTTO_MAX_ASPECT = 1.40
-ROTTO_MAX_EXTENT = 0.48
+# Firma geometrica/cromatica iniziale.
+# Le soglie cromatiche riprendono la caratterizzazione del progetto main.
+COTTO_MAX_V = 190.0
+COTTO_MAX_LAB_L = 168.0
+COTTO_MIN_S = 125.0
+POCO_MIN_V = 212.0
+POCO_MIN_LAB_L = 198.0
+POCO_MAX_S = 105.0
+
+ROTTO_MAX_CIRCULARITY = 0.62
+ROTTO_MAX_SOLIDITY = 0.88
+ROTTO_MIN_ASPECT = 0.72
+ROTTO_MAX_ASPECT = 1.38
+ROTTO_MAX_EXTENT = 0.55
 ROTTO_MIN_SIGNALS = 2
+
+# Firma esplicita del BUONO: serve a evitare che "buono" sia solo il residuo.
+GOOD_MIN_CIRCULARITY = 0.58
+GOOD_MIN_SOLIDITY = 0.90
+GOOD_MIN_ASPECT = 0.76
+GOOD_MAX_ASPECT = 1.32
+GOOD_MIN_EXTENT = 0.50
+
+# Blob: area sensibilmente superiore al riferimento del frame.
+BLOB_AREA_FACTOR = 1.55
 
 CLASS_COLORS = {
     "buono": (0, 255, 0),
@@ -80,7 +94,7 @@ def get_settings() -> dict[str, float | bool]:
 
 
 def build_mask(roi: np.ndarray) -> np.ndarray:
-    """Riduce il ROI a silhouette binarie: bianco=tarallo, nero=fondo."""
+    """Riduce il ROI a silhouette binarie e separa, quando possibile, oggetti a contatto."""
     blurred = cv2.GaussianBlur(roi, (3, 3), 0)
     b, g, r = cv2.split(blurred)
 
@@ -108,6 +122,44 @@ def build_mask(roi: np.ndarray) -> np.ndarray:
             cleaned[labels == label_id] = 255
 
     return cleaned
+
+
+def split_touching_objects(mask: np.ndarray) -> np.ndarray:
+    """Usa distance transform + watershed per separare taralli che si toccano."""
+    if cv2.countNonZero(mask) == 0:
+        return mask
+
+    dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+    max_value = float(dist.max())
+    if max_value <= 0.0:
+        return mask
+
+    sure_fg = np.uint8(dist > (0.38 * max_value)) * 255
+    sure_fg = cv2.morphologyEx(
+        sure_fg,
+        cv2.MORPH_OPEN,
+        cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+    )
+
+    components, markers = cv2.connectedComponents(sure_fg)
+    if components <= 2:
+        return mask
+
+    unknown = cv2.subtract(mask, sure_fg)
+    markers = markers + 1
+    markers[unknown == 255] = 0
+
+    canvas = cv2.cvtColor(mask, cv2.COLOR_GRAY2BGR)
+    markers = cv2.watershed(canvas, markers.astype(np.int32))
+
+    separated = np.zeros_like(mask)
+    for marker_id in range(2, int(markers.max()) + 1):
+        component = np.uint8(markers == marker_id) * 255
+        if cv2.countNonZero(component) >= MIN_COMPONENT_AREA:
+            separated = cv2.bitwise_or(separated, component)
+
+    return separated if cv2.countNonZero(separated) else mask
+
 
 
 def contour_features(
@@ -147,8 +199,16 @@ def contour_features(
     cv2.drawContours(local_mask, [shifted], -1, 255, -1)
 
     hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
-    values = hsv[:, :, 2][local_mask > 0]
-    median_v = float(np.median(values)) if values.size else 0.0
+    lab = cv2.cvtColor(crop, cv2.COLOR_BGR2LAB)
+
+    valid = local_mask > 0
+    values_v = hsv[:, :, 2][valid]
+    values_s = hsv[:, :, 1][valid]
+    values_l = lab[:, :, 0][valid]
+
+    median_v = float(np.median(values_v)) if values_v.size else 0.0
+    median_s = float(np.median(values_s)) if values_s.size else 0.0
+    median_lab_l = float(np.median(values_l)) if values_l.size else 0.0
 
     return {
         "bbox": (x1, y1, x2, y2),
@@ -159,6 +219,8 @@ def contour_features(
         "extent": extent,
         "aspect": aspect,
         "v": median_v,
+        "s": median_s,
+        "lab_l": median_lab_l,
     }
 
 
@@ -169,7 +231,14 @@ def classify(features: dict[str, object], reference_area: float | None) -> str:
     aspect = float(features["aspect"])
     extent = float(features["extent"])
     median_v = float(features["v"])
+    median_s = float(features["s"])
+    median_lab_l = float(features["lab_l"])
 
+    # 1) BLOB: prima verifichiamo la dimensione anomala.
+    if reference_area and area > reference_area * BLOB_AREA_FACTOR:
+        return "blob"
+
+    # 2) ROTTO: richiede piu segnali geometrici simultanei.
     shape_signals = 0
     if circularity < ROTTO_MAX_CIRCULARITY:
         shape_signals += 1
@@ -183,16 +252,39 @@ def classify(features: dict[str, object], reference_area: float | None) -> str:
     if shape_signals >= ROTTO_MIN_SIGNALS:
         return "rotto"
 
-    if reference_area and area > reference_area * BLOB_AREA_FACTOR:
-        return "blob"
+    # 3) Firma cromatica esplicita.
+    cotto_color = (
+        median_v <= COTTO_MAX_V
+        and median_lab_l <= COTTO_MAX_LAB_L
+        and median_s >= COTTO_MIN_S
+    )
+    poco_color = (
+        median_v >= POCO_MIN_V
+        and median_lab_l >= POCO_MIN_LAB_L
+        and median_s <= POCO_MAX_S
+    )
 
-    if median_v < DARK_V:
+    if cotto_color:
         return "cotto"
 
-    if median_v > LIGHT_V:
+    if poco_color:
         return "poco"
 
+    # 4) BUONO: firma geometrica esplicita + colore non estremo.
+    good_geometry = (
+        circularity >= GOOD_MIN_CIRCULARITY
+        and solidity >= GOOD_MIN_SOLIDITY
+        and GOOD_MIN_ASPECT <= aspect <= GOOD_MAX_ASPECT
+        and extent >= GOOD_MIN_EXTENT
+    )
+
+    if good_geometry:
+        return "buono"
+
+    # Caso intermedio: per prudenza resta buono, ma solo dopo aver escluso
+    # segnali forti di blob/rotto/cotto/poco.
     return "buono"
+
 
 
 def detect_taralli(
@@ -213,6 +305,7 @@ def detect_taralli(
 
     roi = frame[y1:y2, x1:x2]
     mask = build_mask(roi)
+    mask = split_touching_objects(mask)
 
     contours, _ = cv2.findContours(
         mask,
@@ -447,6 +540,8 @@ def write_final_report(
         "extent",
         "aspect",
         "v_median",
+        "s_median",
+        "lab_l_median",
     ]
 
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
@@ -583,6 +678,8 @@ def main() -> None:
                                 "extent": round(float(detection["extent"]), 4),
                                 "aspect": round(float(detection["aspect"]), 4),
                                 "v_median": round(float(detection["v"]), 2),
+                                "s_median": round(float(detection["s"]), 2),
+                                "lab_l_median": round(float(detection["lab_l"]), 2),
                             }
                         )
 
