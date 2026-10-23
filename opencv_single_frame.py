@@ -846,6 +846,13 @@ def main() -> None:
 
     global tracker
     tracker = CentroidTracker()
+
+    classifier = LearnedClassifier(DEFAULT_CLASSIFIER_PATH)
+    print(
+        "Classificatore ExtraTrees caricato | validation accuracy: %.2f%%"
+        % (classifier.validation_accuracy * 100.0)
+    )
+
     report_rows: list[dict[str, object]] = []
 
     frame_index = 0
