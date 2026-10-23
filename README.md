@@ -12,8 +12,9 @@ Per preparare il branch:
 
 1. installare le dipendenze con `python -m pip install -r requirements_opencv.txt`;
 2. rendere disponibile il dataset V2 nella cartella `taralli_yolo_v2`;
-3. eseguire `python train_opencv_classifier.py`;
-4. avviare la prova con `python opencv_single_frame.py "percorso_video.mp4"`.
+3. eseguire `python calibrate_opencv_segmentation.py` per calibrare automaticamente la maschera sul dataset;
+4. eseguire `python train_opencv_classifier.py`;
+5. avviare la prova con `python opencv_single_frame.py "percorso_video.mp4"`.
 
 I modelli generati localmente non sono versionati.
 
