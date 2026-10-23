@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import time
 from pathlib import Path
 
 import cv2
@@ -12,7 +13,6 @@ import yaml
 from opencv_features import (
     DEFAULT_SEGMENTATION,
     SEGMENTATION_CONFIG_PATH,
-    build_product_mask,
 )
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
@@ -45,11 +45,11 @@ def find_image_for_label(label_path: Path) -> Path | None:
 
 
 def yolo_bbox(
-    image: np.ndarray,
+    image_shape: tuple[int, int],
     values: list[float],
 ) -> tuple[int, int, int, int]:
+    h, w = image_shape
     _class_id, xc, yc, bw, bh = values
-    h, w = image.shape[:2]
 
     return (
         max(0, int((xc - bw / 2.0) * w)),
@@ -78,14 +78,65 @@ def iou(
     return inter / float(max(1, area_a + area_b - inter))
 
 
-def runtime_boxes(
-    image: np.ndarray,
+def precompute_image(image: np.ndarray) -> dict[str, np.ndarray]:
+    blurred = cv2.GaussianBlur(image, (3, 3), 0)
+    hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
+    b, g, r = cv2.split(blurred)
+
+    return {
+        "hue": hsv[:, :, 0],
+        "sat": hsv[:, :, 1],
+        "b16": b.astype(np.int16),
+        "g16": g.astype(np.int16),
+        "r16": r.astype(np.int16),
+    }
+
+
+def build_mask_precomputed(
+    pre: dict[str, np.ndarray],
+    params: dict[str, int],
+) -> np.ndarray:
+    hue = pre["hue"]
+    sat = pre["sat"]
+    b16 = pre["b16"]
+    g16 = pre["g16"]
+    r16 = pre["r16"]
+
+    blue_background = (
+        (hue >= int(params["hue_low"]))
+        & (hue <= int(params["hue_high"]))
+        & (sat >= int(params["sat_min"]))
+        & (b16 >= g16 + int(params["blue_margin"]))
+        & (b16 >= r16 + int(params["blue_margin"]))
+    )
+
+    raw = (~blue_background).astype(np.uint8) * 255
+
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    opened = cv2.morphologyEx(raw, cv2.MORPH_OPEN, kernel)
+
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(opened, 8)
+    if count <= 1:
+        return np.zeros_like(opened)
+
+    keep = np.zeros(count, dtype=np.uint8)
+    keep[1:] = (
+        stats[1:, cv2.CC_STAT_AREA]
+        >= int(params["min_component_area"])
+    ).astype(np.uint8) * 255
+
+    return keep[labels]
+
+
+def runtime_boxes_precomputed(
+    pre: dict[str, np.ndarray],
     params: dict[str, int],
 ) -> list[tuple[int, int, int, int]]:
-    mask = build_product_mask(image, params)
+    mask = build_mask_precomputed(pre, params)
     count, _labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
 
     boxes = []
+
     for label_id in range(1, count):
         area = int(stats[label_id, cv2.CC_STAT_AREA])
         if area < int(params["min_component_area"]):
@@ -122,6 +173,7 @@ def match_counts(
     for score, gi, pi in pairs:
         if gi in used_gt or pi in used_pred:
             continue
+
         used_gt.add(gi)
         used_pred.add(pi)
         iou_sum += score
@@ -134,7 +186,12 @@ def match_counts(
 
 
 def evaluate(
-    samples: list[tuple[np.ndarray, list[tuple[int, int, int, int]]]],
+    samples: list[
+        tuple[
+            dict[str, np.ndarray],
+            list[tuple[int, int, int, int]],
+        ]
+    ],
     params: dict[str, int],
 ) -> dict[str, float]:
     tp = 0
@@ -142,8 +199,8 @@ def evaluate(
     fn = 0
     iou_sum = 0.0
 
-    for image, gt_boxes in samples:
-        pred_boxes = runtime_boxes(image, params)
+    for pre, gt_boxes in samples:
+        pred_boxes = runtime_boxes_precomputed(pre, params)
         c_tp, c_fp, c_fn, c_iou = match_counts(gt_boxes, pred_boxes)
         tp += c_tp
         fp += c_fp
@@ -170,6 +227,60 @@ def evaluate(
     }
 
 
+def metric_key(metrics: dict[str, float]) -> tuple[float, float, float]:
+    return (
+        metrics["f1"],
+        metrics["recall"],
+        metrics["mean_iou"],
+    )
+
+
+def save_best(
+    params: dict[str, int],
+    metrics: dict[str, float],
+    images: int,
+) -> None:
+    output = {
+        **params,
+        "calibration": {
+            key: round(float(value), 6)
+            for key, value in metrics.items()
+        },
+        "images": images,
+    }
+
+    SEGMENTATION_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    SEGMENTATION_CONFIG_PATH.write_text(
+        json.dumps(output, indent=2),
+        encoding="utf-8",
+    )
+
+
+def print_progress(
+    phase: str,
+    index: int,
+    total: int,
+    started: float,
+    best_metrics: dict[str, float],
+) -> None:
+    elapsed = time.perf_counter() - started
+    pct = (index / total * 100.0) if total else 100.0
+
+    print(
+        "%s %d/%d (%.1f%%) | elapsed %.1fs | best F1 %.2f%% recall %.2f%%"
+        % (
+            phase,
+            index,
+            total,
+            pct,
+            elapsed,
+            best_metrics["f1"] * 100.0,
+            best_metrics["recall"] * 100.0,
+        ),
+        flush=True,
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -185,6 +296,8 @@ def main() -> None:
 
     samples = []
 
+    print("Precomputazione immagini...", flush=True)
+
     for label_path in labels:
         image_path = find_image_for_label(label_path)
         if image_path is None:
@@ -195,6 +308,7 @@ def main() -> None:
             continue
 
         gt_boxes = []
+
         for line in label_path.read_text(encoding="utf-8").splitlines():
             parts = line.strip().split()
             if len(parts) < 5:
@@ -202,97 +316,144 @@ def main() -> None:
 
             values = [float(x) for x in parts[:5]]
             class_id = int(values[0])
+
             if class_id < 0 or class_id >= len(names):
                 continue
 
-            # Blob e un gruppo, quindi non lo usiamo per ottimizzare
-            # la segmentazione del singolo tarallo.
             if names[class_id] == "blob":
                 continue
 
-            gt_boxes.append(yolo_bbox(image, values))
+            gt_boxes.append(
+                yolo_bbox(
+                    image.shape[:2],
+                    values,
+                )
+            )
 
         if gt_boxes:
-            samples.append((image, gt_boxes))
+            samples.append(
+                (
+                    precompute_image(image),
+                    gt_boxes,
+                )
+            )
 
     if not samples:
         raise RuntimeError("Nessuna immagine valida per la calibrazione")
 
-    base = dict(DEFAULT_SEGMENTATION)
+    print("Immagini precomputate:", len(samples), flush=True)
 
-    best_params = dict(base)
+    best_params = dict(DEFAULT_SEGMENTATION)
     best_metrics = evaluate(samples, best_params)
+    save_best(best_params, best_metrics, len(samples))
 
-    # Ricerca coarse sui parametri che definiscono il fondo blu.
-    for blue_margin, hue_low, hue_high, sat_min in itertools.product(
-        (4, 8, 12, 16),
-        (80, 85, 90),
-        (125, 135, 145),
-        (35, 50, 65),
+    started = time.perf_counter()
+
+    coarse_grid = list(
+        itertools.product(
+            (4, 10, 16),
+            (82, 88, 94),
+            (130, 140),
+            (35, 55),
+        )
+    )
+
+    total_coarse = len(coarse_grid)
+
+    for index, (blue_margin, hue_low, hue_high, sat_min) in enumerate(
+        coarse_grid,
+        start=1,
     ):
         params = {
             "blue_margin": blue_margin,
             "hue_low": hue_low,
             "hue_high": hue_high,
             "sat_min": sat_min,
-            "min_component_area": 70,
+            "min_component_area": 80,
         }
 
         metrics = evaluate(samples, params)
 
-        key = (
-            metrics["f1"],
-            metrics["recall"],
-            metrics["mean_iou"],
-        )
-        best_key = (
-            best_metrics["f1"],
-            best_metrics["recall"],
-            best_metrics["mean_iou"],
-        )
-
-        if key > best_key:
+        if metric_key(metrics) > metric_key(best_metrics):
             best_params = params
             best_metrics = metrics
+            save_best(best_params, best_metrics, len(samples))
 
-    # Rifinitura dell'area minima sulla migliore definizione del fondo.
-    color_best = dict(best_params)
+        if index == 1 or index % 6 == 0 or index == total_coarse:
+            print_progress(
+                "COARSE",
+                index,
+                total_coarse,
+                started,
+                best_metrics,
+            )
 
-    for min_area in (40, 60, 80, 100, 120):
-        params = dict(color_best)
-        params["min_component_area"] = min_area
+    bm = int(best_params["blue_margin"])
+    hl = int(best_params["hue_low"])
+    hh = int(best_params["hue_high"])
+    sm = int(best_params["sat_min"])
+
+    refine_grid = []
+
+    for blue_margin, hue_low, hue_high, sat_min, min_area in itertools.product(
+        sorted(set((max(0, bm - 3), bm, bm + 3))),
+        sorted(set((max(0, hl - 4), hl, hl + 4))),
+        sorted(set((max(1, hh - 5), hh, min(179, hh + 5)))),
+        sorted(set((max(0, sm - 10), sm, min(255, sm + 10)))),
+        (50, 80, 110),
+    ):
+        if hue_low >= hue_high:
+            continue
+
+        refine_grid.append(
+            (
+                blue_margin,
+                hue_low,
+                hue_high,
+                sat_min,
+                min_area,
+            )
+        )
+
+    total_refine = len(refine_grid)
+    refine_started = time.perf_counter()
+
+    for index, (
+        blue_margin,
+        hue_low,
+        hue_high,
+        sat_min,
+        min_area,
+    ) in enumerate(refine_grid, start=1):
+        params = {
+            "blue_margin": blue_margin,
+            "hue_low": hue_low,
+            "hue_high": hue_high,
+            "sat_min": sat_min,
+            "min_component_area": min_area,
+        }
+
         metrics = evaluate(samples, params)
 
-        key = (
-            metrics["f1"],
-            metrics["recall"],
-            metrics["mean_iou"],
-        )
-        best_key = (
-            best_metrics["f1"],
-            best_metrics["recall"],
-            best_metrics["mean_iou"],
-        )
-
-        if key > best_key:
+        if metric_key(metrics) > metric_key(best_metrics):
             best_params = params
             best_metrics = metrics
+            save_best(best_params, best_metrics, len(samples))
 
-    output = {
-        **best_params,
-        "calibration": {
-            key: round(float(value), 6)
-            for key, value in best_metrics.items()
-        },
-        "images": len(samples),
-    }
+        if index == 1 or index % 15 == 0 or index == total_refine:
+            print_progress(
+                "REFINE",
+                index,
+                total_refine,
+                refine_started,
+                best_metrics,
+            )
 
-    SEGMENTATION_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    SEGMENTATION_CONFIG_PATH.write_text(
-        json.dumps(output, indent=2),
-        encoding="utf-8",
-    )
+    save_best(best_params, best_metrics, len(samples))
 
+    total_elapsed = time.perf_counter() - started
+
+    print("")
     print("CALIBRAZIONE SEGMENTAZIONE")
     print("Immagini:", len(samples))
     print("Parametri:", best_params)
@@ -313,6 +474,7 @@ def main() -> None:
             int(best_metrics["fn"]),
         )
     )
+    print("Tempo totale: %.1fs" % total_elapsed)
     print("Configurazione:", SEGMENTATION_CONFIG_PATH)
 
 
