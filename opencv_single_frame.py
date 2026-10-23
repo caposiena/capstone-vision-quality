@@ -20,6 +20,7 @@ WINDOW_SETTINGS = "visionTar - Settaggi"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_CLASSIFIER_PATH = PROJECT_ROOT / "models" / "opencv_extratrees.joblib"
+DEFAULT_BLOB_CLASSIFIER_PATH = PROJECT_ROOT / "models" / "opencv_blob_binary.joblib"
 
 # Interfaccia operativa: solo parametri che servono davvero durante la prova.
 DEFAULT_ROI_LEFT = 30
@@ -512,6 +513,14 @@ class LearnedClassifier:
         self.validation_accuracy = float(meta.get("validation_accuracy", 0.0))
         self.model = joblib.load(model_path)
 
+        if not DEFAULT_BLOB_CLASSIFIER_PATH.exists():
+            raise FileNotFoundError(
+                "Manca il classificatore blob binario: %s\n"
+                "Esegui prima: python train_opencv_classifier.py"
+                % DEFAULT_BLOB_CLASSIFIER_PATH
+            )
+        self.blob_model = joblib.load(DEFAULT_BLOB_CLASSIFIER_PATH)
+
 
     def predict(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> str:
         x1, y1, x2, y2 = bbox
@@ -519,8 +528,8 @@ class LearnedClassifier:
 
         box_w = max(1, x2 - x1)
         box_h = max(1, y2 - y1)
-        pad_x = max(3, int(box_w * 0.12))
-        pad_y = max(3, int(box_h * 0.12))
+        pad_x = max(3, int(box_w * 0.08))
+        pad_y = max(3, int(box_h * 0.08))
 
         x1 = max(0, x1 - pad_x)
         y1 = max(0, y1 - pad_y)
@@ -536,61 +545,36 @@ class LearnedClassifier:
                 % (features.shape[1], self.feature_count)
             )
 
-        # Feature strutturali finali del vettore:
-        # occupancy, component_count, hole_count, circularity,
-        # solidity, extent, aspect, largest_ratio.
-        component_count = float(features[0, -7])
-        hole_count = float(features[0, -6])
-        solidity = float(features[0, -4])
-        extent = float(features[0, -3])
-        aspect = float(features[0, -2])
-        largest_ratio = float(features[0, -1])
+        # Primo stadio: blob dedicato. Nessuna euristica manuale.
+        # Il blob viene forzato solo con probabilita molto alta.
+        if hasattr(self.blob_model, "predict_proba"):
+            blob_probability = float(
+                self.blob_model.predict_proba(features)[0][1]
+            )
+        else:
+            blob_probability = float(self.blob_model.predict(features)[0])
 
+        if blob_probability >= 0.80:
+            return "blob"
+
+        # Secondo stadio: classificatore generale a 5 classi.
         prediction = self.model.predict(features)
         class_id = int(prediction[0])
 
         if class_id < 0 or class_id >= len(self.class_names):
-            class_id = self.class_names.index("buono")
+            return "buono"
 
         label = self.class_names[class_id]
 
-        # Probabilita del modello, quando disponibili.
-        blob_probability = 0.0
-        rotto_probability = 0.0
-        if hasattr(self.model, "predict_proba"):
+        # Se il multiclass dice blob ma il binario non conferma abbastanza,
+        # non forziamo: scegliamo la seconda classe piu probabile.
+        if label == "blob" and hasattr(self.model, "predict_proba"):
             probabilities = self.model.predict_proba(features)[0]
-            for idx, class_value in enumerate(self.model.classes_):
-                class_name = self.class_names[int(class_value)]
-                if class_name == "blob":
-                    blob_probability = float(probabilities[idx])
-                elif class_name == "rotto":
-                    rotto_probability = float(probabilities[idx])
-
-        # Stadio 1: struttura di gruppo.
-        # Un vero blob industriale e prima di tutto piu di un pezzo/sagoma
-        # nello stesso crop, non semplicemente un singolo tarallo deformato.
-        clear_group = (
-            component_count >= 2.0
-            or hole_count >= 2.0
-            or aspect >= 1.65
-        )
-
-        probable_group = (
-            largest_ratio >= 0.48
-            and (
-                solidity <= 0.82
-                or extent <= 0.46
-                or aspect >= 1.48
-            )
-        )
-
-        if clear_group:
-            return "blob"
-
-        # Se ExtraTrees oscilla tra ROTTO e BLOB, la struttura decide.
-        if label == "rotto" and probable_group:
-            if blob_probability >= 0.18 or blob_probability >= rotto_probability * 0.55:
-                return "blob"
+            ranked = np.argsort(probabilities)[::-1]
+            for idx in ranked:
+                candidate = self.class_names[int(self.model.classes_[idx])]
+                if candidate != "blob":
+                    return candidate
 
         return label
 
