@@ -529,6 +529,7 @@ class CentroidTracker:
 
             display_detection = dict(detection)
             display_detection["display_label"] = track["final_label"]
+            display_detection["is_final"] = track["final_label"] is not None
             results.append((best_id, display_detection, crossed))
 
         # Invecchiamento track non osservati.
@@ -590,13 +591,36 @@ def draw_overlay(
         cv2.rectangle(output, (bx1, by1), (bx2, by2), color, 2)
         cv2.circle(output, (int(cx), int(cy)), 3, color, -1)
 
+        text_y = max(22, by1 - 8)
+
+        if final_label:
+            (tw, th), baseline = cv2.getTextSize(
+                text,
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.52,
+                2,
+            )
+            bg_y1 = max(0, text_y - th - 5)
+            bg_y2 = min(output.shape[0] - 1, text_y + baseline + 3)
+            bg_x2 = min(output.shape[1] - 1, bx1 + tw + 8)
+            cv2.rectangle(
+                output,
+                (bx1, bg_y1),
+                (bg_x2, bg_y2),
+                color,
+                -1,
+            )
+            text_color = (0, 0, 0) if label in ("blob", "rotto") else (255, 255, 255)
+        else:
+            text_color = color
+
         cv2.putText(
             output,
             text,
-            (bx1, max(18, by1 - 6)),
+            (bx1 + 4 if final_label else bx1, text_y),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.52,
-            color,
+            text_color,
             2,
             cv2.LINE_AA,
         )
