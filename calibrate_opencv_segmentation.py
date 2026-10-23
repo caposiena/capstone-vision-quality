@@ -223,19 +223,19 @@ def main() -> None:
     best_params = dict(base)
     best_metrics = evaluate(samples, best_params)
 
-    # Ricerca coarse sulle soglie cromatiche.
-    for r_margin, g_margin, sat_min, val_min in itertools.product(
-        (4, 7, 10),
-        (0, 2, 4),
-        (8, 14, 18),
-        (30, 40, 45),
+    # Ricerca coarse sui parametri che definiscono il fondo blu.
+    for blue_margin, hue_low, hue_high, sat_min in itertools.product(
+        (4, 8, 12, 16),
+        (80, 85, 90),
+        (125, 135, 145),
+        (35, 50, 65),
     ):
         params = {
-            "r_margin": r_margin,
-            "g_margin": g_margin,
+            "blue_margin": blue_margin,
+            "hue_low": hue_low,
+            "hue_high": hue_high,
             "sat_min": sat_min,
-            "val_min": val_min,
-            "min_component_area": 80,
+            "min_component_area": 70,
         }
 
         metrics = evaluate(samples, params)
@@ -255,10 +255,10 @@ def main() -> None:
             best_params = params
             best_metrics = metrics
 
-    # Rifinitura della sola area minima sulla migliore soglia colore.
+    # Rifinitura dell'area minima sulla migliore definizione del fondo.
     color_best = dict(best_params)
 
-    for min_area in (50, 70, 90, 110, 130):
+    for min_area in (40, 60, 80, 100, 120):
         params = dict(color_best)
         params["min_component_area"] = min_area
         metrics = evaluate(samples, params)
