@@ -12,10 +12,15 @@ import yaml
 from sklearn.ensemble import ExtraTreesClassifier
 from sklearn.metrics import confusion_matrix
 
-from opencv_features import FEATURE_VERSION, extract_features
-
+from opencv_features import (
+    FEATURE_VERSION,
+    build_product_mask,
+    crop_object,
+    extract_features,
+)
 
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".bmp", ".webp")
+ML_CLASSES = ("buono", "cotto", "poco", "rotto")
 
 
 def load_names(data_yaml: Path) -> list[str]:
@@ -29,7 +34,6 @@ def load_names(data_yaml: Path) -> list[str]:
 
 
 def find_image_for_label(label_path: Path) -> Path | None:
-    text = str(label_path)
     candidates = []
 
     if "labels" in label_path.parts:
@@ -39,12 +43,19 @@ def find_image_for_label(label_path: Path) -> Path | None:
         base = Path(*parts).with_suffix("")
         candidates.extend(base.with_suffix(ext) for ext in IMAGE_EXTENSIONS)
 
-    # Fallback nello stesso dataset.
     stem = label_path.stem
     dataset_root = label_path
-    while dataset_root.parent != dataset_root and dataset_root.name not in ("labels", "images"):
+    while (
+        dataset_root.parent != dataset_root
+        and dataset_root.name not in ("labels", "images")
+    ):
         dataset_root = dataset_root.parent
-    root = dataset_root.parent if dataset_root.name in ("labels", "images") else label_path.parent
+
+    root = (
+        dataset_root.parent
+        if dataset_root.name in ("labels", "images")
+        else label_path.parent
+    )
 
     for ext in IMAGE_EXTENSIONS:
         candidates.extend(root.rglob(stem + ext))
@@ -55,7 +66,10 @@ def find_image_for_label(label_path: Path) -> Path | None:
     return None
 
 
-def crop_from_yolo(image: np.ndarray, values: list[float]) -> np.ndarray:
+def yolo_bbox(
+    image: np.ndarray,
+    values: list[float],
+) -> tuple[int, int, int, int]:
     _class_id, xc, yc, bw, bh = values
     h, w = image.shape[:2]
 
@@ -64,15 +78,54 @@ def crop_from_yolo(image: np.ndarray, values: list[float]) -> np.ndarray:
     x2 = int((xc + bw / 2.0) * w)
     y2 = int((yc + bh / 2.0) * h)
 
-    pad_x = max(2, int((x2 - x1) * 0.06))
-    pad_y = max(2, int((y2 - y1) * 0.06))
+    return (
+        max(0, x1),
+        max(0, y1),
+        min(w, x2),
+        min(h, y2),
+    )
 
-    x1 = max(0, x1 - pad_x)
-    y1 = max(0, y1 - pad_y)
-    x2 = min(w, x2 + pad_x)
-    y2 = min(h, y2 + pad_y)
 
-    return image[y1:y2, x1:x2]
+def iou(
+    a: tuple[int, int, int, int],
+    b: tuple[int, int, int, int],
+) -> float:
+    ax1, ay1, ax2, ay2 = a
+    bx1, by1, bx2, by2 = b
+
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+
+    iw = max(0, ix2 - ix1)
+    ih = max(0, iy2 - iy1)
+    inter = iw * ih
+
+    area_a = max(1, (ax2 - ax1) * (ay2 - ay1))
+    area_b = max(1, (bx2 - bx1) * (by2 - by1))
+    union = area_a + area_b - inter
+
+    return float(inter) / float(max(1, union))
+
+
+def runtime_boxes(image: np.ndarray) -> list[tuple[int, int, int, int]]:
+    mask = build_product_mask(image)
+    count, _labels, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+
+    boxes = []
+    for label_id in range(1, count):
+        area = int(stats[label_id, cv2.CC_STAT_AREA])
+        if area < 120:
+            continue
+
+        x = int(stats[label_id, cv2.CC_STAT_LEFT])
+        y = int(stats[label_id, cv2.CC_STAT_TOP])
+        w = int(stats[label_id, cv2.CC_STAT_WIDTH])
+        h = int(stats[label_id, cv2.CC_STAT_HEIGHT])
+        boxes.append((x, y, x + w, y + h))
+
+    return boxes
 
 
 def main() -> None:
@@ -85,7 +138,9 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).resolve().parent / "models" / "opencv_extratrees.joblib",
+        default=Path(__file__).resolve().parent
+        / "models"
+        / "opencv_extratrees.joblib",
     )
     args = parser.parse_args()
 
@@ -94,12 +149,16 @@ def main() -> None:
     if not data_yaml.exists():
         raise FileNotFoundError("Manca data.yaml: %s" % data_yaml)
 
-    names = load_names(data_yaml)
+    source_names = load_names(data_yaml)
+    class_to_model = {name: idx for idx, name in enumerate(ML_CLASSES)}
     labels = sorted(dataset.rglob("*.txt"))
 
     samples = []
     targets = []
-    source_keys = []
+    source_images = []
+
+    unmatched = 0
+    skipped_blob = 0
 
     for label_path in labels:
         image_path = find_image_for_label(label_path)
@@ -110,90 +169,86 @@ def main() -> None:
         if image is None:
             continue
 
-        for row_index, line in enumerate(label_path.read_text(encoding="utf-8").splitlines()):
+        boxes_runtime = runtime_boxes(image)
+
+        for line in label_path.read_text(encoding="utf-8").splitlines():
             parts = line.strip().split()
             if len(parts) < 5:
                 continue
 
             values = [float(x) for x in parts[:5]]
-            class_id = int(values[0])
-            if class_id < 0 or class_id >= len(names):
+            source_class_id = int(values[0])
+            if source_class_id < 0 or source_class_id >= len(source_names):
                 continue
 
-            crop = crop_from_yolo(image, values)
+            class_name = source_names[source_class_id]
+            if class_name == "blob":
+                skipped_blob += 1
+                continue
+            if class_name not in class_to_model:
+                continue
+
+            gt_box = yolo_bbox(image, values)
+            if not boxes_runtime:
+                unmatched += 1
+                continue
+
+            best_box = max(boxes_runtime, key=lambda box: iou(gt_box, box))
+            best_iou = iou(gt_box, best_box)
+            if best_iou < 0.50:
+                unmatched += 1
+                continue
+
+            crop = crop_object(image, best_box)
             if crop.size == 0:
+                unmatched += 1
                 continue
 
             samples.append(extract_features(crop)[0])
-            targets.append(class_id)
-            source_keys.append("%s:%d" % (image_path.name, row_index))
+            targets.append(class_to_model[class_name])
+            source_images.append(image_path.name)
 
     if not samples:
-        raise RuntimeError("Nessun campione estratto dal dataset")
+        raise RuntimeError("Nessun campione coerente estratto dal dataset")
 
     x = np.asarray(samples, dtype=np.float32)
     y = np.asarray(targets, dtype=np.int32)
 
-    # Holdout per IMMAGINE: tutti gli oggetti della stessa foto finiscono
-    # nello stesso split. Evita una validazione artificialmente ottimistica.
     train_idx = []
     test_idx = []
 
-    for i, key in enumerate(source_keys):
-        image_key = key.split(":", 1)[0]
-        bucket = zlib.crc32(image_key.encode("utf-8")) % 5
+    for i, image_name in enumerate(source_images):
+        bucket = zlib.crc32(image_name.encode("utf-8")) % 5
         if bucket == 0:
             test_idx.append(i)
         else:
             train_idx.append(i)
 
-    # Garantisce che tutte le classi siano presenti nel test; se una manca,
-    # sposta un campione di quella classe dal train.
+    # Se una classe manca dal test, sposta un'INTERA immagine contenente
+    # quella classe, mantenendo l'isolamento per immagine.
     for class_id in sorted(set(y.tolist())):
-        if not any(int(y[i]) == class_id for i in test_idx):
-            candidate = next(
-                (i for i in train_idx if int(y[i]) == class_id),
-                None,
-            )
-            if candidate is not None:
-                train_idx.remove(candidate)
-                test_idx.append(candidate)
+        if any(int(y[i]) == class_id for i in test_idx):
+            continue
 
-    x_train_raw = x[train_idx]
-    y_train_raw = y[train_idx]
+        candidate_image = next(
+            (
+                source_images[i]
+                for i in train_idx
+                if int(y[i]) == class_id
+            ),
+            None,
+        )
+        if candidate_image is None:
+            continue
+
+        moved = [i for i in train_idx if source_images[i] == candidate_image]
+        train_idx = [i for i in train_idx if source_images[i] != candidate_image]
+        test_idx.extend(moved)
+
+    x_train = x[train_idx]
+    y_train = y[train_idx]
     x_test = x[test_idx]
     y_test = y[test_idx]
-
-    # Bilanciamento semplice: replica le classi minoritarie fino alla numerosita
-    # della classe piu rappresentata. Utile soprattutto per blob/rotto.
-    class_counts = {
-        class_id: int(np.sum(y_train_raw == class_id))
-        for class_id in sorted(set(y_train_raw.tolist()))
-    }
-    target_count = max(class_counts.values())
-
-    balanced_x = []
-    balanced_y = []
-
-    for class_id, count in class_counts.items():
-        class_x = x_train_raw[y_train_raw == class_id]
-        repeats = target_count // count
-        remainder = target_count % count
-
-        if repeats > 0:
-            balanced_x.append(np.tile(class_x, (repeats, 1)))
-            balanced_y.append(
-                np.full((count * repeats,), class_id, dtype=np.int32)
-            )
-
-        if remainder > 0:
-            balanced_x.append(class_x[:remainder])
-            balanced_y.append(
-                np.full((remainder,), class_id, dtype=np.int32)
-            )
-
-    x_train = np.vstack(balanced_x).astype(np.float32)
-    y_train = np.concatenate(balanced_y).astype(np.int32)
 
     model = ExtraTreesClassifier(
         n_estimators=300,
@@ -202,46 +257,21 @@ def main() -> None:
         max_features="sqrt",
         class_weight="balanced",
         random_state=42,
-        n_jobs=-1,
+        n_jobs=1,
     )
     model.fit(x_train, y_train)
 
     pred = model.predict(x_test).astype(np.int32)
-
-    # Classificatore binario dedicato BLOB / NON-BLOB.
-    blob_class_id = names.index("blob")
-    y_train_blob = (y_train == blob_class_id).astype(np.int32)
-    y_test_blob = (y_test == blob_class_id).astype(np.int32)
-
-    blob_model = ExtraTreesClassifier(
-        n_estimators=350,
-        max_depth=None,
-        min_samples_leaf=1,
-        max_features="sqrt",
-        class_weight="balanced",
-        random_state=84,
-        n_jobs=-1,
-    )
-    blob_model.fit(x_train, y_train_blob)
-    blob_pred = blob_model.predict(x_test).astype(np.int32)
-    blob_accuracy = (
-        float(np.mean(blob_pred == y_test_blob))
-        if len(y_test_blob)
-        else 0.0
-    )
-
     accuracy = float(np.mean(pred == y_test)) if len(y_test) else 0.0
+
     confusion = confusion_matrix(
         y_test,
         pred,
-        labels=list(range(len(names))),
+        labels=list(range(len(ML_CLASSES))),
     ).astype(np.int32)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, args.output)
-
-    blob_output = args.output.with_name("opencv_blob_binary.joblib")
-    joblib.dump(blob_model, blob_output)
 
     meta_path = args.output.with_suffix(".json")
     meta_path.write_text(
@@ -249,31 +279,29 @@ def main() -> None:
             {
                 "feature_version": FEATURE_VERSION,
                 "feature_count": int(x.shape[1]),
-                "class_names": names,
+                "class_names": list(ML_CLASSES),
                 "samples": int(len(y)),
-                "train_samples_raw": int(len(y_train_raw)),
-                "train_samples_balanced": int(len(y_train)),
+                "train_samples": int(len(y_train)),
                 "test_samples": int(len(y_test)),
-                "model_type": "sklearn.ensemble.ExtraTreesClassifier",
                 "validation_accuracy": accuracy,
-                "blob_binary_accuracy": blob_accuracy,
-                "blob_binary_model": str(blob_output.name),
                 "confusion_matrix": confusion.tolist(),
+                "runtime_unmatched": unmatched,
+                "blob_labels_excluded": skipped_blob,
             },
             indent=2,
         ),
         encoding="utf-8",
     )
 
-    print("Campioni:", len(y))
-    print("Classi:", names)
+    print("Campioni ML:", len(y))
+    print("Classi ML:", list(ML_CLASSES))
     print("Feature:", x.shape[1])
+    print("YOLO non abbinati alla segmentazione runtime:", unmatched)
+    print("Blob esclusi dal ML:", skipped_blob)
     print("Accuracy validation: %.2f%%" % (accuracy * 100.0))
-    print("Blob binary accuracy: %.2f%%" % (blob_accuracy * 100.0))
     print("Confusion matrix:")
     print(confusion)
-    print("Modello ExtraTrees:", args.output)
-    print("Modello blob binary:", blob_output)
+    print("Modello:", args.output)
     print("Metadata:", meta_path)
 
 
