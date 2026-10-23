@@ -4,9 +4,9 @@ Il branch `opencv-single-frame-pc` contiene una variante CPU-only pensata per ve
 
 Il flusso sperimentale è:
 
-video → ROI → segmentazione OpenCV → tracking → deadline → classificazione single-frame → responso finale
+video → ROI → segmentazione OpenCV → tracking → deadline → gate strutturale blob → classificazione single-frame → responso finale
 
-La segmentazione e il tracking vengono eseguiti in OpenCV. Al passaggio della deadline il prodotto viene classificato una sola volta tramite un classificatore ExtraTrees addestrato sulle feature di colore e forma estratte dal dataset V2; il responso viene quindi congelato.
+La segmentazione e il tracking vengono eseguiti in OpenCV. La stessa funzione di segmentazione e la stessa funzione di crop sono usate in training e runtime. Al passaggio della deadline i gruppi vengono riconosciuti con un gate strutturale sulla maschera; i singoli pezzi vengono classificati una sola volta da ExtraTrees nelle classi buono, cotto, poco e rotto. Il responso viene quindi congelato.
 
 Per preparare il branch:
 
