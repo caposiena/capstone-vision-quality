@@ -1,15 +1,49 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import cv2
 import numpy as np
 
-FEATURE_VERSION = 2
+FEATURE_VERSION = 3
 
-MIN_COMPONENT_AREA = 120
+PROJECT_ROOT = Path(__file__).resolve().parent
+SEGMENTATION_CONFIG_PATH = PROJECT_ROOT / "models" / "opencv_segmentation.json"
+
+DEFAULT_SEGMENTATION = {
+    "r_margin": 10,
+    "g_margin": 4,
+    "sat_min": 18,
+    "val_min": 45,
+    "min_component_area": 120,
+}
 
 
-def build_product_mask(image: np.ndarray) -> np.ndarray:
-    """Single canonical product mask used by training and runtime."""
+def load_segmentation_config() -> dict[str, int]:
+    config = dict(DEFAULT_SEGMENTATION)
+
+    if SEGMENTATION_CONFIG_PATH.exists():
+        saved = json.loads(
+            SEGMENTATION_CONFIG_PATH.read_text(encoding="utf-8")
+        )
+        for key in config:
+            if key in saved:
+                config[key] = int(saved[key])
+
+    return config
+
+
+SEGMENTATION = load_segmentation_config()
+
+
+def build_product_mask(
+    image: np.ndarray,
+    params: dict[str, int] | None = None,
+) -> np.ndarray:
+    """Single canonical product mask used by calibration, training and runtime."""
+    cfg = SEGMENTATION if params is None else params
+
     blurred = cv2.GaussianBlur(image, (3, 3), 0)
     b, g, r = cv2.split(blurred)
     hsv = cv2.cvtColor(blurred, cv2.COLOR_BGR2HSV)
@@ -19,10 +53,10 @@ def build_product_mask(image: np.ndarray) -> np.ndarray:
     r16 = r.astype(np.int16)
 
     raw = (
-        (r16 > b16 + 10)
-        & (g16 > b16 + 4)
-        & (hsv[:, :, 1] >= 18)
-        & (hsv[:, :, 2] >= 45)
+        (r16 > b16 + int(cfg["r_margin"]))
+        & (g16 > b16 + int(cfg["g_margin"]))
+        & (hsv[:, :, 1] >= int(cfg["sat_min"]))
+        & (hsv[:, :, 2] >= int(cfg["val_min"]))
     ).astype(np.uint8) * 255
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
@@ -34,8 +68,10 @@ def build_product_mask(image: np.ndarray) -> np.ndarray:
 
     keep = np.zeros(count, dtype=np.uint8)
     keep[1:] = (
-        stats[1:, cv2.CC_STAT_AREA] >= MIN_COMPONENT_AREA
+        stats[1:, cv2.CC_STAT_AREA]
+        >= int(cfg["min_component_area"])
     ).astype(np.uint8) * 255
+
     return keep[labels]
 
 
