@@ -39,7 +39,7 @@ def _hist(values: np.ndarray, bins: int, max_value: float) -> list[float]:
 
 def extract_features(crop: np.ndarray) -> np.ndarray:
     if crop is None or crop.size == 0:
-        return np.zeros((1, 52), dtype=np.float32)
+        return np.zeros((1, 59), dtype=np.float32)
 
     mask = warm_mask(crop)
     valid = mask > 0
