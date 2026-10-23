@@ -1,3 +1,22 @@
+**Branch sperimentale OpenCV single-frame**
+
+Il branch `opencv-single-frame-pc` contiene una variante CPU-only pensata per verificare una pipeline più leggera rispetto al flusso YOLO del progetto principale.
+
+Il flusso sperimentale è:
+
+video → ROI → segmentazione OpenCV → tracking → deadline → classificazione single-frame → responso finale
+
+La segmentazione e il tracking vengono eseguiti in OpenCV. Al passaggio della deadline il prodotto viene classificato una sola volta tramite un classificatore ExtraTrees addestrato sulle feature di colore e forma estratte dal dataset V2; il responso viene quindi congelato.
+
+Per preparare il branch:
+
+1. installare le dipendenze con `python -m pip install -r requirements_opencv.txt`;
+2. rendere disponibile il dataset V2 nella cartella `taralli_yolo_v2`;
+3. eseguire `python train_opencv_classifier.py`;
+4. avviare la prova con `python opencv_single_frame.py "percorso_video.mp4"`.
+
+I modelli generati localmente non sono versionati.
+
 **Sistema di visione artificiale per il controllo qualità di prodotti da forno**
 
 Capstone EPICODE dedicato al controllo visivo di taralli su nastro trasportatore.
