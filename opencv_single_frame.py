@@ -35,6 +35,7 @@ BLUE_DOMINANCE = 12
 MIN_COMPONENT_AREA = 120
 TRACK_MAX_DISTANCE = 85.0
 TRACK_MAX_MISSED = 10
+INFERENCE_STRIDE = 2
 
 # Firma geometrica/cromatica iniziale.
 # Le soglie cromatiche riprendono la caratterizzazione del progetto main.
@@ -461,7 +462,19 @@ def detect_taralli(
 
     roi = frame[y1:y2, x1:x2]
     mask = build_mask(roi)
-    mask = split_touching_objects(mask)
+
+    # Watershed e costoso: lo usiamo solo se esiste almeno un componente
+    # chiaramente piu grande della mediana, altrimenti manteniamo la maschera.
+    count_cc, _labels_cc, stats_cc, _ = cv2.connectedComponentsWithStats(mask, 8)
+    cc_areas = [
+        int(stats_cc[i, cv2.CC_STAT_AREA])
+        for i in range(1, count_cc)
+        if int(stats_cc[i, cv2.CC_STAT_AREA]) >= MIN_COMPONENT_AREA
+    ]
+    if len(cc_areas) >= 2:
+        med_cc = float(np.median(cc_areas))
+        if any(area > med_cc * 1.55 for area in cc_areas):
+            mask = split_touching_objects(mask)
 
     contours, _ = cv2.findContours(
         mask,
@@ -528,15 +541,23 @@ class LearnedClassifier:
 
         box_w = max(1, x2 - x1)
         box_h = max(1, y2 - y1)
-        pad_x = max(3, int(box_w * 0.08))
-        pad_y = max(3, int(box_h * 0.08))
 
-        x1 = max(0, x1 - pad_x)
-        y1 = max(0, y1 - pad_y)
-        x2 = min(w, x2 + pad_x)
-        y2 = min(h, y2 + pad_y)
+        # Crop quadrato centrato sul pezzo, piu simile ai crop usati nel dataset.
+        cx = (x1 + x2) // 2
+        cy = (y1 + y2) // 2
+        side = int(max(box_w, box_h) * 1.22)
+        side = max(side, 24)
 
-        crop = frame[y1:y2, x1:x2]
+        sx1 = max(0, cx - side // 2)
+        sy1 = max(0, cy - side // 2)
+        sx2 = min(w, sx1 + side)
+        sy2 = min(h, sy1 + side)
+
+        # Mantiene il crop quadrato anche vicino ai bordi.
+        sx1 = max(0, sx2 - side)
+        sy1 = max(0, sy2 - side)
+
+        crop = frame[sy1:sy2, sx1:sx2]
         features = extract_features(crop)
 
         if features.shape[1] != self.feature_count:
@@ -545,8 +566,7 @@ class LearnedClassifier:
                 % (features.shape[1], self.feature_count)
             )
 
-        # Primo stadio: blob dedicato. Nessuna euristica manuale.
-        # Il blob viene forzato solo con probabilita molto alta.
+        blob_probability = 0.0
         if hasattr(self.blob_model, "predict_proba"):
             blob_probability = float(
                 self.blob_model.predict_proba(features)[0][1]
@@ -554,10 +574,6 @@ class LearnedClassifier:
         else:
             blob_probability = float(self.blob_model.predict(features)[0])
 
-        if blob_probability >= 0.80:
-            return "blob"
-
-        # Secondo stadio: classificatore generale a 5 classi.
         prediction = self.model.predict(features)
         class_id = int(prediction[0])
 
@@ -566,15 +582,33 @@ class LearnedClassifier:
 
         label = self.class_names[class_id]
 
-        # Se il multiclass dice blob ma il binario non conferma abbastanza,
-        # non forziamo: scegliamo la seconda classe piu probabile.
-        if label == "blob" and hasattr(self.model, "predict_proba"):
-            probabilities = self.model.predict_proba(features)[0]
-            ranked = np.argsort(probabilities)[::-1]
-            for idx in ranked:
-                candidate = self.class_names[int(self.model.classes_[idx])]
-                if candidate != "blob":
-                    return candidate
+        # BLOB richiede doppia conferma:
+        # 1) modello binario molto sicuro
+        # 2) anche il multiclass deve considerarlo blob o quasi blob.
+        if blob_probability >= 0.90:
+            if label == "blob":
+                return "blob"
+            if hasattr(self.model, "predict_proba"):
+                probabilities = self.model.predict_proba(features)[0]
+                blob_idx = None
+                for idx, class_value in enumerate(self.model.classes_):
+                    if self.class_names[int(class_value)] == "blob":
+                        blob_idx = idx
+                        break
+                if blob_idx is not None and float(probabilities[blob_idx]) >= 0.35:
+                    return "blob"
+
+        # Se il multiclass propone blob ma il binario non conferma forte,
+        # scegliamo la seconda classe.
+        if label == "blob":
+            if hasattr(self.model, "predict_proba"):
+                probabilities = self.model.predict_proba(features)[0]
+                ranked = np.argsort(probabilities)[::-1]
+                for idx in ranked:
+                    candidate = self.class_names[int(self.model.classes_[idx])]
+                    if candidate != "blob":
+                        return candidate
+            return "rotto"
 
         return label
 
