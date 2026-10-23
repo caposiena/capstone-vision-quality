@@ -1,13 +1,17 @@
-Questa cartella ospita il modello addestrato usato per l'inferenza.
+Questa cartella ospita i modelli generati localmente per l'inferenza.
 
-Il file dei pesi non è incluso nella repository.
+Nel progetto principale il modello YOLO atteso è:
 
-Per eseguire il progetto, copiare qui il modello YOLO addestrato e rinominarlo:
+`models/best.pt`
 
-best.pt
+Nel branch `opencv-single-frame-pc`, dopo l'esecuzione di:
 
-Percorso atteso dal software:
+`python train_opencv_classifier.py`
 
-models/best.pt
+vengono generati localmente:
 
-Il modello usato nel Capstone è stato ottenuto dal training sul dataset V2 descritto in docs/DATASET.md.
+- `opencv_extratrees.joblib`
+- `opencv_blob_binary.joblib`
+- `opencv_extratrees.json`
+
+I file di modello non sono versionati nella repository.
