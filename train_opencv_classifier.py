@@ -6,8 +6,11 @@ import zlib
 from pathlib import Path
 
 import cv2
+import joblib
 import numpy as np
 import yaml
+from sklearn.ensemble import ExtraTreesClassifier
+from sklearn.metrics import confusion_matrix
 
 from opencv_features import FEATURE_VERSION, extract_features
 
@@ -82,7 +85,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).resolve().parent / "models" / "opencv_rtrees.yml",
+        default=Path(__file__).resolve().parent / "models" / "opencv_extratrees.joblib",
     )
     args = parser.parse_args()
 
@@ -192,37 +195,28 @@ def main() -> None:
     x_train = np.vstack(balanced_x).astype(np.float32)
     y_train = np.concatenate(balanced_y).astype(np.int32)
 
-    if hasattr(cv2.ml, "RTrees_create"):
-        model = cv2.ml.RTrees_create()
-    elif hasattr(cv2.ml, "RTrees") and hasattr(cv2.ml.RTrees, "create"):
-        model = cv2.ml.RTrees.create()
-    else:
-        raise RuntimeError(
-            "Questa build OpenCV non espone RTrees. Disponibili in cv2.ml: %s"
-            % ", ".join(sorted(name for name in dir(cv2.ml) if "Tree" in name or "Forest" in name))
-        )
-    model.setMaxDepth(14)
-    model.setMinSampleCount(2)
-    model.setRegressionAccuracy(0.0)
-    model.setUseSurrogates(False)
-    model.setMaxCategories(len(names))
-    model.setCalculateVarImportance(True)
-    model.setActiveVarCount(0)
-    model.setTermCriteria((cv2.TERM_CRITERIA_MAX_ITER, 250, 0))
+    model = ExtraTreesClassifier(
+        n_estimators=300,
+        max_depth=None,
+        min_samples_leaf=1,
+        max_features="sqrt",
+        class_weight="balanced",
+        random_state=42,
+        n_jobs=-1,
+    )
+    model.fit(x_train, y_train)
 
-    if not model.train(x_train, cv2.ml.ROW_SAMPLE, y_train.astype(np.float32)):
-        raise RuntimeError("Training RTrees fallito")
-
-    _, predicted = model.predict(x_test)
-    pred = predicted.reshape(-1).astype(np.int32)
+    pred = model.predict(x_test).astype(np.int32)
 
     accuracy = float(np.mean(pred == y_test)) if len(y_test) else 0.0
-    confusion = np.zeros((len(names), len(names)), dtype=np.int32)
-    for truth, guess in zip(y_test, pred):
-        confusion[int(truth), int(guess)] += 1
+    confusion = confusion_matrix(
+        y_test,
+        pred,
+        labels=list(range(len(names))),
+    ).astype(np.int32)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    model.save(str(args.output))
+    joblib.dump(model, args.output)
 
     meta_path = args.output.with_suffix(".json")
     meta_path.write_text(
@@ -235,6 +229,7 @@ def main() -> None:
                 "train_samples_raw": int(len(y_train_raw)),
                 "train_samples_balanced": int(len(y_train)),
                 "test_samples": int(len(y_test)),
+                "model_type": "sklearn.ensemble.ExtraTreesClassifier",
                 "validation_accuracy": accuracy,
                 "confusion_matrix": confusion.tolist(),
             },
@@ -249,7 +244,7 @@ def main() -> None:
     print("Accuracy validation: %.2f%%" % (accuracy * 100.0))
     print("Confusion matrix:")
     print(confusion)
-    print("Modello:", args.output)
+    print("Modello ExtraTrees:", args.output)
     print("Metadata:", meta_path)
 
 
