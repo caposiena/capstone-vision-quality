@@ -10,10 +10,15 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from opencv_features import extract_features
+
 
 WINDOW_VIDEO = "visionTar - OpenCV"
 WINDOW_MASK = "visionTar - Maschera"
 WINDOW_SETTINGS = "visionTar - Settaggi"
+
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_CLASSIFIER_PATH = PROJECT_ROOT / "models" / "opencv_rtrees.yml"
 
 # Interfaccia operativa: solo parametri che servono davvero durante la prova.
 DEFAULT_ROI_LEFT = 30
@@ -517,6 +522,64 @@ def detect_taralli(
     return features, mask, (x1, y1, x2, y2)
 
 
+class LearnedClassifier:
+    def __init__(self, model_path: Path) -> None:
+        self.model_path = model_path
+        self.meta_path = model_path.with_suffix(".json")
+
+        if not model_path.exists():
+            raise FileNotFoundError(
+                "Manca il classificatore OpenCV: %s\n"
+                "Esegui prima: python train_opencv_classifier.py"
+                % model_path
+            )
+
+        if not self.meta_path.exists():
+            raise FileNotFoundError(
+                "Mancano i metadata del classificatore: %s"
+                % self.meta_path
+            )
+
+        import json
+
+        meta = json.loads(self.meta_path.read_text(encoding="utf-8"))
+        self.class_names = [str(x) for x in meta["class_names"]]
+        self.feature_count = int(meta["feature_count"])
+        self.validation_accuracy = float(meta.get("validation_accuracy", 0.0))
+        self.model = cv2.ml.RTrees_load(str(model_path))
+
+    def predict(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> str:
+        x1, y1, x2, y2 = bbox
+        h, w = frame.shape[:2]
+
+        box_w = max(1, x2 - x1)
+        box_h = max(1, y2 - y1)
+        pad_x = max(2, int(box_w * 0.08))
+        pad_y = max(2, int(box_h * 0.08))
+
+        x1 = max(0, x1 - pad_x)
+        y1 = max(0, y1 - pad_y)
+        x2 = min(w, x2 + pad_x)
+        y2 = min(h, y2 + pad_y)
+
+        crop = frame[y1:y2, x1:x2]
+        features = extract_features(crop)
+
+        if features.shape[1] != self.feature_count:
+            raise RuntimeError(
+                "Feature incompatibili: runtime=%d modello=%d"
+                % (features.shape[1], self.feature_count)
+            )
+
+        _value, prediction = self.model.predict(features)
+        class_id = int(round(float(prediction[0, 0])))
+
+        if class_id < 0 or class_id >= len(self.class_names):
+            return "buono"
+
+        return self.class_names[class_id]
+
+
 class CentroidTracker:
     def __init__(self) -> None:
         self.next_id = 1
@@ -585,7 +648,7 @@ class CentroidTracker:
                     and abs(curr_x - prev_x) >= 2
                 )
                 if crossed:
-                    track["final_label"] = str(detection["label"])
+                    pass
 
             display_detection = dict(detection)
             display_detection["display_label"] = track["final_label"]
@@ -828,7 +891,7 @@ def main() -> None:
 
     print("Video:", video_path)
     print("FPS sorgente:", source_fps)
-    print("Pipeline: OpenCV puro | tracking continuo | decisione SINGLE-FRAME alla deadline")
+    print("Pipeline: OpenCV puro | tracking continuo | RTrees SINGLE-FRAME alla deadline")
     print("Tasti: SPAZIO pausa | M maschera | Q/ESC uscita")
 
     try:
@@ -869,7 +932,10 @@ def main() -> None:
 
                 for track_id, detection, crossed in tracked:
                     if crossed:
-                        label = str(detection["label"])
+                        label = classifier.predict(
+                            frame,
+                            detection["bbox"],
+                        )
                         tracker.tracks[track_id]["final_label"] = label
                         detection["display_label"] = label
                         cx, cy = detection["center"]
