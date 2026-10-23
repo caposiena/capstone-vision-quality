@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 
 import cv2
+import joblib
 import numpy as np
 
 from opencv_features import extract_features
@@ -18,7 +19,7 @@ WINDOW_MASK = "visionTar - Maschera"
 WINDOW_SETTINGS = "visionTar - Settaggi"
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_CLASSIFIER_PATH = PROJECT_ROOT / "models" / "opencv_rtrees.yml"
+DEFAULT_CLASSIFIER_PATH = PROJECT_ROOT / "models" / "opencv_extratrees.joblib"
 
 # Interfaccia operativa: solo parametri che servono davvero durante la prova.
 DEFAULT_ROI_LEFT = 30
@@ -509,14 +510,8 @@ class LearnedClassifier:
         self.class_names = [str(x) for x in meta["class_names"]]
         self.feature_count = int(meta["feature_count"])
         self.validation_accuracy = float(meta.get("validation_accuracy", 0.0))
-        if hasattr(cv2.ml, "RTrees_load"):
-            self.model = cv2.ml.RTrees_load(str(model_path))
-        elif hasattr(cv2.ml, "RTrees") and hasattr(cv2.ml.RTrees, "load"):
-            self.model = cv2.ml.RTrees.load(str(model_path))
-        else:
-            raise RuntimeError(
-                "Questa build OpenCV non espone il loader RTrees."
-            )
+        self.model = joblib.load(model_path)
+
 
     def predict(self, frame: np.ndarray, bbox: tuple[int, int, int, int]) -> str:
         x1, y1, x2, y2 = bbox
@@ -541,8 +536,8 @@ class LearnedClassifier:
                 % (features.shape[1], self.feature_count)
             )
 
-        _value, prediction = self.model.predict(features)
-        class_id = int(round(float(prediction[0, 0])))
+        prediction = self.model.predict(features)
+        class_id = int(prediction[0])
 
         if class_id < 0 or class_id >= len(self.class_names):
             return "buono"
@@ -861,7 +856,7 @@ def main() -> None:
 
     print("Video:", video_path)
     print("FPS sorgente:", source_fps)
-    print("Pipeline: OpenCV puro | tracking continuo | RTrees SINGLE-FRAME alla deadline")
+    print("Pipeline: OpenCV puro | tracking continuo | ExtraTrees SINGLE-FRAME alla deadline")
     print("Tasti: SPAZIO pausa | M maschera | Q/ESC uscita")
 
     try:
