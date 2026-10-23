@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import math
 import time
+from datetime import datetime
 from pathlib import Path
 
 import cv2
@@ -415,6 +417,75 @@ def draw_overlay(
     return output
 
 
+def write_final_report(
+    report_rows: list[dict[str, object]],
+    video_path: Path,
+    source_fps: float,
+) -> tuple[Path, Path]:
+    reports_dir = Path(__file__).resolve().parent / "reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    stem = video_path.stem.replace(" ", "_")
+    csv_path = reports_dir / ("%s_%s_final.csv" % (stem, stamp))
+    summary_path = reports_dir / ("%s_%s_summary.txt" % (stem, stamp))
+
+    fieldnames = [
+        "id",
+        "classe",
+        "frame",
+        "tempo_video_s",
+        "x",
+        "y",
+        "bbox_x1",
+        "bbox_y1",
+        "bbox_x2",
+        "bbox_y2",
+        "area",
+        "circularity",
+        "solidity",
+        "extent",
+        "aspect",
+        "v_median",
+    ]
+
+    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(report_rows)
+
+    counts = {name: 0 for name in CLASS_COLORS}
+    for row in report_rows:
+        label = str(row["classe"])
+        counts[label] = counts.get(label, 0) + 1
+
+    total = len(report_rows)
+    defects = sum(
+        counts.get(name, 0)
+        for name in ("cotto", "poco", "blob", "rotto")
+    )
+
+    lines = [
+        "visionTar - Report finale OpenCV",
+        "Video: %s" % video_path,
+        "FPS sorgente: %.3f" % source_fps,
+        "Decisioni FINAL: %d" % total,
+        "Buono: %d" % counts.get("buono", 0),
+        "Cotto: %d" % counts.get("cotto", 0),
+        "Poco: %d" % counts.get("poco", 0),
+        "Blob: %d" % counts.get("blob", 0),
+        "Rotto: %d" % counts.get("rotto", 0),
+        "Difettosi totali: %d" % defects,
+        "Percentuale difettosi: %.2f%%"
+        % ((defects / total * 100.0) if total else 0.0),
+        "",
+        "CSV dettaglio: %s" % csv_path,
+    ]
+
+    summary_path.write_text("\n".join(lines), encoding="utf-8")
+    return csv_path, summary_path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="visionTar - pipeline OpenCV pura realtime"
@@ -434,10 +505,12 @@ def main() -> None:
     source_period = 1.0 / source_fps
 
     cv2.namedWindow(WINDOW_VIDEO, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW_VIDEO, 1280, 720)
     create_settings_window()
 
     global tracker
     tracker = CentroidTracker()
+    report_rows: list[dict[str, object]] = []
 
     frame_index = 0
     processing_fps = 0.0
@@ -489,13 +562,37 @@ def main() -> None:
                 for track_id, detection, crossed in tracked:
                     if crossed:
                         label = str(detection["display_label"])
+                        cx, cy = detection["center"]
+                        bx1, by1, bx2, by2 = detection["bbox"]
+
+                        report_rows.append(
+                            {
+                                "id": track_id,
+                                "classe": label,
+                                "frame": frame_index,
+                                "tempo_video_s": round(frame_index / source_fps, 3),
+                                "x": int(cx),
+                                "y": int(cy),
+                                "bbox_x1": int(bx1),
+                                "bbox_y1": int(by1),
+                                "bbox_x2": int(bx2),
+                                "bbox_y2": int(by2),
+                                "area": round(float(detection["area"]), 2),
+                                "circularity": round(float(detection["circularity"]), 4),
+                                "solidity": round(float(detection["solidity"]), 4),
+                                "extent": round(float(detection["extent"]), 4),
+                                "aspect": round(float(detection["aspect"]), 4),
+                                "v_median": round(float(detection["v"]), 2),
+                            }
+                        )
+
                         print(
                             "FINAL ID %d | %s | x=%d y=%d"
                             % (
                                 track_id,
                                 label,
-                                int(detection["center"][0]),
-                                int(detection["center"][1]),
+                                int(cx),
+                                int(cy),
                             )
                         )
 
@@ -539,6 +636,16 @@ def main() -> None:
     finally:
         capture.release()
         cv2.destroyAllWindows()
+
+        csv_path, summary_path = write_final_report(
+            report_rows,
+            video_path,
+            source_fps,
+        )
+        print("")
+        print("REPORT FINALE")
+        print("CSV:", csv_path)
+        print("Riepilogo:", summary_path)
 
 
 if __name__ == "__main__":
