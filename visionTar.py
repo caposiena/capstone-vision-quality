@@ -60,7 +60,7 @@ DEFECT_CLASSES = {
     "rotto",
 }
 
-CONFIDENCE_THRESHOLD = 0.35
+CONFIDENCE_THRESHOLD = 0.30
 
 # Geometria di acquisizione centralizzata. Il profilo standard puo essere
 # sostituito dalla dashboard senza modificare le soglie del classificatore.
