@@ -76,14 +76,15 @@ La documentazione tecnica essenziale è in `docs/DATASET.md` e `docs/CALIBRAZION
 
 Il dataset V2 contiene **96 immagini e 1127 oggetti annotati**.
 
-Sul benchmark tecnico eseguito sull'intero dataset con soglia di confidence 0.35, YOLO ha ottenuto:
+Sul benchmark tecnico dell'intero dataset, la soglia operativa è stata regolata in funzione dell'obiettivo reale del controllo qualità: intercettare il maggior numero possibile di difetti, accettando una quota limitata di falsi scarti.
 
-- precision: **91.27%**
-- recall: **97.43%**
-- F1 detection: **94.25%**
-- accuratezza di classe sui match: **91.71%**
+Con confidence **0.30**, la valutazione binaria difettoso/buono ha restituito:
 
-Questo benchmark include anche immagini utilizzate durante training e validation, quindi serve a verificare la coerenza del modello e della soglia operativa, non va interpretato come misura indipendente di generalizzazione.
+- recall difetti: **95.73%**
+- precision difetti: **83.57%**
+- F1 difetti: **89.24%**
+
+Il benchmark comprende anche immagini utilizzate durante training e validation, quindi serve a scegliere la soglia operativa e non va interpretato come misura indipendente di generalizzazione.
 
 La verifica indipendente resta quella sul test set e sui video separati descritti nei documenti di validazione.
 
