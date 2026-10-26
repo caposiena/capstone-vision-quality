@@ -122,9 +122,9 @@ COLOR_INNER_CROP_RATIO = 0.15
 COTTO_MAX_V = 192.0
 COTTO_MAX_LAB_L = 170.0
 COTTO_MIN_S = 122.0
-POCO_MIN_V = 218.0
-POCO_MIN_LAB_L = 210.0
-POCO_MAX_S = 95.0
+POCO_MIN_V = 216.0
+POCO_MIN_LAB_L = 206.0
+POCO_MAX_S = 100.0
 COTTO_COLOR_SUPPORTED_THRESHOLD = 0.28
 COTTO_COLOR_OVERRIDE_MIN_OBSERVATIONS = 2
 COTTO_COLOR_OVERRIDE_MIN_AVG_CONFIDENCE = 0.50
@@ -134,7 +134,7 @@ POCO_COLOR_MIN_OBSERVATIONS = 3
 # Conferma finale di luminosita per "poco".
 # La soglia e volutamente prudenziale per evitare che normali variazioni
 # di luce vengano interpretate come prodotto poco cotto.
-POCO_FINAL_MIN_LAB_L = 215.0
+POCO_FINAL_MIN_LAB_L = 212.0
 
 # Supporto geometrico prudenziale per la classe rotto.
 # Le soglie sono iniziali e verranno validate sul benchmark manuale del video 2.
