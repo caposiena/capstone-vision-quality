@@ -859,7 +859,10 @@ with right_col:
 
 if start_clicked:
     if not DEFAULT_MODEL_PATH.exists():
-        st.error(f"Modello YOLO non trovato: {DEFAULT_MODEL_PATH}")
+        st.error(
+            "Modello YOLO non trovato. Copia best.pt in models/best.pt "
+            "oppure mantieni il modello addestrato nella cartella runs del progetto."
+        )
     else:
         prep_status = st.status("Preparazione...", expanded=False)
         try:
