@@ -66,7 +66,22 @@ ROI_BOTTOM_RATIO = BASE_ACQUISITION_PROFILE.roi_bottom
 DEADLINE_X_RATIO = BASE_ACQUISITION_PROFILE.deadline_x
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "best.pt"
+PORTABLE_MODEL_PATH = PROJECT_ROOT / "models" / "best.pt"
+TRAINING_MODEL_PATH = (
+    PROJECT_ROOT
+    / "runs"
+    / "detect"
+    / "runs"
+    / "train"
+    / "taralli_v2_yolo11n"
+    / "weights"
+    / "best.pt"
+)
+DEFAULT_MODEL_PATH = (
+    PORTABLE_MODEL_PATH
+    if PORTABLE_MODEL_PATH.exists()
+    else TRAINING_MODEL_PATH
+)
 DEFAULT_DATASET_PATH = PROJECT_ROOT / "taralli_yolo_v2"
 TRACK_MAX_MISSED_FRAMES = 14
 TRACK_OBSERVATION_WINDOW = 12
