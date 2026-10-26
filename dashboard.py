@@ -576,8 +576,11 @@ with input_col:
     analysis_mode = st.selectbox(
         "Frequenza analisi",
         ["Completa · ogni frame", "Veloce · 1 frame su 2"],
-        index=0,
-        help="La modalità veloce dimezza le inferenze YOLO mantenendo frame e timestamp reali.",
+        index=1,
+        help=(
+            "Per la demo è consigliata la modalità veloce: dimezza le inferenze "
+            "YOLO mantenendo frame, timestamp e logica di responso."
+        ),
     )
     frame_stride = 2 if analysis_mode.startswith("Veloce") else 1
     st.caption("Durante l'analisi: SPAZIO = pausa / riprendi")
@@ -966,7 +969,7 @@ if start_clicked:
                 ok, encoded = cv2.imencode(
                     ".jpg",
                     preview,
-                    [int(cv2.IMWRITE_JPEG_QUALITY), 76],
+                    [int(cv2.IMWRITE_JPEG_QUALITY), 70],
                 )
                 if ok:
                     video_frame.image(
