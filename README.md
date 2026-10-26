@@ -1,70 +1,96 @@
-**Sistema di visione artificiale per il controllo qualità di prodotti da forno**
+# visionTar
 
-Capstone EPICODE dedicato al controllo visivo di taralli su nastro trasportatore.
+Sistema di visione artificiale per il controllo qualità dei taralli su nastro trasportatore.
 
-Il prototipo riconosce i singoli pezzi, assegna una classe e registra gli scarti. Le classi usate sono buono, cotto, poco, blob e rotto.
+Il progetto nasce come Capstone EPICODE e simula un controllo in linea: il software individua i prodotti, li segue mentre attraversano l'area di ispezione, assegna un responso finale e registra gli scarti.
 
-La parte di riconoscimento utilizza YOLO. OpenCV viene usato per l'acquisizione dei frame, per i controlli su colore e geometria e per la visualizzazione. Le detection dello stesso prodotto vengono raccolte in un track e il responso viene fissato quando il pezzo raggiunge la deadline impostata nella ROI.
+Le classi sono:
 
-**Avvio**
+- buono
+- cotto
+- poco
+- blob
+- rotto
 
-L'ambiente usato per lo sviluppo è Python 3.11.
+## Architettura
 
-Il file dei pesi addestrati non è incluso nella repository. Per eseguire l'inferenza è necessario copiare il modello addestrato nella cartella models con il nome best.pt.
+La pipeline è volutamente ibrida.
 
-Procedura consigliata dopo il clone della repository:
+**YOLO** individua i singoli taralli e propone la classe con una confidence.
 
-1. creare e attivare un ambiente virtuale Python 3.11;
-2. installare le dipendenze con python -m pip install -r requirements.txt;
-3. copiare il modello in models/best.pt;
-4. avviare la dashboard con streamlit run .\dashboard.py.
+**OpenCV** gestisce il video, la ROI, il tracking, la deadline, i descrittori di colore e forma, la visualizzazione e la simulazione delle botole di scarto.
 
-Il modello usato durante lo sviluppo è best.pt, ottenuto dal training sul dataset V2. Il percorso è relativo alla cartella del progetto, quindi non dipende dal computer su cui viene eseguito.
+Le osservazioni dello stesso tarallo vengono raccolte in un track. Il responso non dipende quindi da un singolo frame: viene consolidato prima della deadline e poi congelato.
 
-**File principali**
+Flusso essenziale:
 
-visionTar.py contiene l'analisi video, il tracking, il responso finale e la generazione dei CSV. dashboard.py contiene l'interfaccia Streamlit. acquisition_config.py raccoglie i profili ROI e deadline. video_source.py gestisce le sorgenti video. database.py gestisce sessioni, scarti e report SQLite.
+```text
+video -> ROI -> YOLO -> tracking -> colore/forma -> deadline
+      -> responso finale -> coordinate di scarto -> report di lotto
+```
 
-trainTar.py viene usato per il training, testTar.py per la valutazione del modello e buildDatasetV2.py per la preparazione del dataset.
+## Dashboard
 
-La documentazione del dataset e della validazione si trova in docs/DATASET.md e docs/CALIBRAZIONE.md. Il dataset V2 e i pesi del modello non sono versionati nella repository; struttura, composizione, split e metriche sono documentati nei file del progetto.
+La dashboard Streamlit permette di:
 
-**Funzionamento**
+- caricare un video o predisporre una videocamera USB;
+- impostare prodotto, lotto, ROI e deadline;
+- scegliere la frequenza di analisi;
+- vedere il nastro con bounding box, tracking e responso;
+- visualizzare i contatori degli scarti per classe;
+- simulare l'associazione tra difetto e botole;
+- salvare sessioni ed esportare report CSV.
 
-Il flusso è questo:
+Per la demo la modalità predefinita è **Veloce - 1 frame su 2**. Riduce il carico di inferenza mantenendo i riferimenti temporali del video. La modalità completa resta disponibile.
 
-video → ROI → YOLO → tracking → colore/geometria → deadline → responso finale → coordinate scarto → database/report
+## Avvio
 
-Durante l'uso normale la dashboard conserva il report di lotto e gli eventi di scarto necessari al controllo. Il CSV dettagliato delle detection frame per frame resta disponibile come strumento diagnostico, ma non viene generato nella modalità operativa a basso utilizzo di spazio. Gli eventi di scarto contengono coordinate, bounding box, timestamp e botole associate.
+Ambiente di sviluppo: Python 3.11.
 
-La dashboard registra anche data di produzione, prodotto e lotto e aggiorna il report riepilogativo report_lotti.csv.
+Dopo il clone:
 
-**Validazione**
+1. creare e attivare un ambiente virtuale;
+2. installare le dipendenze con `python -m pip install -r requirements.txt`;
+3. copiare il modello addestrato in `models/best.pt`;
+4. avviare la dashboard con:
 
-Il video 2 è stato usato per la calibrazione, il video 3 per la verifica indipendente e il video 1 come prova aggiuntiva con zoom e illuminazione differenti.
+```powershell
+streamlit run .\dashboard.py
+```
 
-Video 2, conteggio manuale: cotto 6, poco 5, blob 7, rotto 14.  
-Video 2, sistema: cotto 6, poco 5, blob 6, rotto 15.
+Il modello non è incluso nella repository.
 
-Video 3, conteggio manuale: cotto 2, poco 3, blob 1, rotto 8.  
-Video 3, sistema: cotto 2, poco 3, blob 1, rotto 9.
+## File principali
 
-Sul video 1 il riferimento manuale disponibile per rotto è 14; il sistema ne rileva 17.
+- `visionTar.py`: inferenza video, tracking e responso finale;
+- `dashboard.py`: interfaccia Streamlit;
+- `acquisition_config.py`: profili ROI e deadline;
+- `database.py`: sessioni, eventi di scarto e report;
+- `trainTar.py`: training YOLO;
+- `testTar.py`: valutazione del modello;
+- `buildDatasetV2.py`: preparazione del dataset.
 
-I dettagli sono riportati in docs/CALIBRAZIONE.md.
+La documentazione tecnica essenziale è in `docs/DATASET.md` e `docs/CALIBRAZIONE.md`.
 
-**Dashboard e simulazione dello scarto**
+## Risultati
 
-Dalla dashboard si impostano ROI, deadline, larghezza del nastro e numero di botole. La configurazione usata nel prototipo è un nastro da 40 cm con 20 botole.
+Il dataset V2 contiene **96 immagini e 1127 oggetti annotati**.
 
-Quando un pezzo viene classificato come difettoso, la bounding box viene riferita alla larghezza utile del nastro e trasformata nelle botole interessate. Nel file tecnico rimangono anche le coordinate in pixel e normalizzate, il frame e il timestamp.
+Sul benchmark tecnico eseguito sull'intero dataset con soglia di confidence 0.35, YOLO ha ottenuto:
 
-Il pannello laterale mostra le botole che il software assocerebbe allo scarto. La sincronizzazione fisica tra camera e attuatore non fa parte di questa versione e verrà affidata all'encoder della linea.
+- precision: **91.27%**
+- recall: **97.43%**
+- F1 detection: **94.25%**
+- accuratezza di classe sui match: **91.71%**
 
-**Limiti attuali**
+Questo benchmark include anche immagini utilizzate durante training e validation, quindi serve a verificare la coerenza del modello e della soglia operativa, non va interpretato come misura indipendente di generalizzazione.
 
-La validazione è stata fatta su video registrati. La videocamera USB è già gestita per la fase di calibrazione, ma l'elaborazione continua con hardware reale non è stata ancora validata.
+La verifica indipendente resta quella sul test set e sui video separati descritti nei documenti di validazione.
 
-La velocità di elaborazione dipende dall'hardware utilizzato. I test del Capstone sono stati eseguiti su un PC CPU-only non recente, sul quale l'analisi può risultare più lenta della durata reale del video. La dashboard offre una modalità completa, che analizza ogni frame, e una modalità veloce sperimentale, che esegue l'inferenza su un frame ogni due mantenendo i riferimenti temporali originali. La modalità completa resta quella di riferimento per la validazione; per un impiego in linea è prevista una piattaforma di inferenza più adatta al tempo reale.
+## Limiti
 
-Encoder, attuatore e collegamento al gestionale restano fuori dal perimetro della versione consegnata.
+Il prototipo è stato validato su video registrati. La resa dipende molto da camera fissa, illuminazione controllata e prodotto disposto su singolo strato.
+
+La sincronizzazione fisica tra camera, encoder e attuatori non fa parte della versione consegnata. Nel prototipo viene simulata l'associazione tra posizione del difetto e botole di scarto.
+
+Il tempo reale industriale richiede hardware di inferenza adeguato; i test del Capstone sono stati eseguiti anche su PC CPU-only.
