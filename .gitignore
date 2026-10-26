@@ -2,15 +2,14 @@
 __pycache__/
 *.pyc
 
-# Modelli scaricati/addestrati
-# Temporaneamente consentiamo il modello operativo V2 nella cartella models/.
-# Gli altri pesi restano esclusi.
+# Modello operativo
 *.pt
 !models/best.pt
 
 # Dataset e output di training locali
 dataset/
 taralli_yolo_v2/
+taralli_yolo_v2.zip
 runs/
 
 # Output locali
@@ -18,9 +17,11 @@ runs/
 *_detections_test.csv
 *_finali_test.csv
 *_finali.csv
-
 *_scarti_test.csv
 *_scarti.csv
+report_lotti.csv
+reports/
+models/runtime_config.json
 
 # Database locale di runtime
 visiontar.db
