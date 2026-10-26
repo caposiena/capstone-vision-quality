@@ -31,7 +31,7 @@ st.set_page_config(
 )
 
 
-CONFIG_DEFAULTS_VERSION = 2
+CONFIG_DEFAULTS_VERSION = 3
 
 
 def init_state() -> None:
@@ -580,6 +580,7 @@ with input_col:
         help="La modalità veloce dimezza le inferenze YOLO mantenendo frame e timestamp reali.",
     )
     frame_stride = 2 if analysis_mode.startswith("Veloce") else 1
+    st.caption("Durante l'analisi: SPAZIO = pausa / riprendi")
 
     profile_labels = {key: profile.label for key, profile in PROFILES.items()}
     selected_key = st.selectbox(
@@ -1002,6 +1003,7 @@ if start_clicked:
                     trapdoor_count=st.session_state.trapdoor_count,
                     save_detection_csv=False,
                     frame_stride=frame_stride,
+                    pause_with_space=True,
                 )
 
                 scarti_path = run_input.with_name(
