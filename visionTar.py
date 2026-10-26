@@ -894,6 +894,49 @@ def calculate_final_verdict(observations) -> dict[str, float | str]:
             "rotto_score_ratio": rotto_score_ratio,
         }
 
+    # Per i difetti di cottura YOLO individua il candidato, ma il colore
+    # deve confermare il gradiente prima dello scarto. In questo modo un
+    # singolo voto di classe non basta a trasformare un tarallo buono in
+    # "cotto" o "poco".
+    if (
+        candidate_label in {"cotto", "poco"}
+        and defect_share >= threshold
+        and (
+            color_support != candidate_label
+            or (
+                candidate_label == "poco"
+                and track_lab_l < POCO_FINAL_MIN_LAB_L
+            )
+        )
+    ):
+        good_conf = (
+            sum(confidences["buono"]) / len(confidences["buono"])
+            if confidences["buono"]
+            else candidate_avg_confidence
+        )
+        return {
+            "label": "buono",
+            "confidence": good_conf,
+            "state": "FINALE",
+            "defect_share": defect_share,
+            "class_share": class_share,
+            "threshold": threshold,
+            "color_support": f"{candidate_label}_non_confermato",
+            "track_v": track_v,
+            "track_s": track_s,
+            "track_lab_l": track_lab_l,
+            "shape_support": shape_support,
+            "shape_anomalies": shape_anomalies,
+            "track_circularity": track_circularity,
+            "track_solidity": track_solidity,
+            "track_aspect": track_aspect,
+            "track_extent": track_extent,
+            "strong_shape_override": strong_shape_override,
+            "rotto_observations": rotto_observations,
+            "rotto_avg_confidence": rotto_avg_confidence,
+            "rotto_score_ratio": rotto_score_ratio,
+        }
+
     # Conferma colore forte per "cotto": nel video 2 i tre falsi negativi
     # residui hanno profilo colore coerente con i tre cotto gia riconosciuti.
     # L'override resta vincolato a una vera osservazione YOLO di cotto.
