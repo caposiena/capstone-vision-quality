@@ -86,11 +86,11 @@ Con confidence **0.30**, la valutazione binaria difettoso/buono ha restituito:
 
 Il benchmark comprende anche immagini utilizzate durante training e validation, quindi serve a scegliere la soglia operativa e non va interpretato come misura indipendente di generalizzazione.
 
-La verifica indipendente resta quella sul test set e sui video separati descritti nei documenti di validazione.
+La verifica video finale è stata eseguita su sequenze reali di linea, confrontando i conteggi automatici con un riferimento manuale. Sul video principale, di circa tre minuti e 1.307 prodotti analizzati, la taratura finale ha restituito 5 prodotti "cotto" e 5 "poco", in linea con il conteggio manuale. Un secondo video, usato come prova di robustezza, ha confermato la stabilità della classe "cotto" e ha evidenziato una maggiore sensibilità della classe "poco", che è stata quindi ribilanciata senza modificare le altre classi.
 
 ## Limiti
 
-Il prototipo è stato validato su video registrati. La resa dipende molto da camera fissa, illuminazione controllata e prodotto disposto su singolo strato.
+Il prototipo è stato validato su video registrati di linea. La configurazione industriale prevista utilizza camera fissa, illuminazione boxata e ambiente schermato dalle interferenze luminose esterne, condizioni più stabili rispetto alle acquisizioni usate durante lo sviluppo.
 
 La sincronizzazione fisica tra camera, encoder e attuatori non fa parte della versione consegnata. Nel prototipo viene simulata l'associazione tra posizione del difetto e botole di scarto.
 
