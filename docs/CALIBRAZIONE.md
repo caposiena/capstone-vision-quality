@@ -1,26 +1,49 @@
-**Calibrazione e validazione**
+# Calibrazione e validazione
 
-La calibrazione è stata eseguita sui video acquisiti sulla linea di prova. Il video 2 è stato usato come riferimento principale, mentre il video 3 è stato tenuto separato per la verifica successiva.
+Il sistema finale usa YOLO per localizzare e classificare i taralli e OpenCV per gestire video, ROI, tracking, colore, geometria e deadline.
 
-Il responso non dipende soltanto dalla classe restituita da YOLO nell'ultimo frame. Le detection dello stesso pezzo vengono associate in un track e valutate prima della deadline. Per cotto e poco vengono considerati anche i descrittori HSV e Lab. Per rotto entrano nel controllo anche circolarità, solidità, aspect ratio ed extent.
+La soglia operativa YOLO è **0.35**. Sul benchmark tecnico dell'intero dataset questa soglia ha migliorato l'equilibrio tra falsi positivi e falsi negativi rispetto a 0.25:
 
-La deadline è stata collocata prima della zona in cui diventano più evidenti riflessi e variazioni di illuminazione. ROI e deadline cambiano in funzione dell'inquadratura; le soglie del classificatore rimangono invece invariate.
+| Confidence | Precision | Recall | F1 |
+|---|---:|---:|---:|
+| 0.25 | 87.18% | 98.94% | 92.68% |
+| 0.35 | 91.27% | 97.43% | 94.25% |
 
-**Risultati**
+Il modello non è stato riaddestrato durante questo confronto: è migliorata la scelta della soglia operativa e, soprattutto, la qualità della verifica.
 
-Video 2, conteggio manuale: cotto 6, poco 5, blob 7, rotto 14.  
-Video 2, sistema: cotto 6, poco 5, blob 6, rotto 15.
+## Responso finale
 
-Video 3, conteggio manuale: cotto 2, poco 3, blob 1, rotto 8.  
-Video 3, sistema: cotto 2, poco 3, blob 1, rotto 9.
+Il responso non viene preso dall'ultima detection disponibile.
 
-Il video 1 è stato usato come prova di robustezza perché presenta uno zoom diverso e un'illuminazione meno uniforme. Per questo video è disponibile un conteggio manuale verificato solo per la classe rotto: 14 pezzi. Il sistema ne restituisce 17.
+Le osservazioni dello stesso prodotto vengono associate in un track. Prima della deadline il sistema considera:
 
-Il risultato del video 1 mostra che la componente geometrica è sensibile alla distanza di ripresa e alle condizioni di luce. Su una linea reale sono quindi importanti camera fissa, distanza costante, illuminazione controllata e prodotto disposto su singolo strato.
+- voti e confidence YOLO;
+- descrittori HSV e Lab per cotto e poco;
+- descrittori geometrici per rotto;
+- continuità temporale del track.
 
-Dopo il confronto sui video di validazione le soglie sono state stabilizzate. Nei test finali più lunghi è stata applicata soltanto una lieve correzione prudenziale alla conferma della classe cotto, senza modificare tracking, poco, blob o rotto.
+Quando il prodotto attraversa la deadline, il responso viene fissato e non cambia più.
 
+## Verifica sui video
 
-**Prestazioni di elaborazione**
+Il video 2 è stato usato come riferimento principale; il video 3 come verifica separata.
 
-La velocità dipende dalla macchina su cui viene eseguito il modello. I test sono stati svolti su un PC CPU-only non recente e l'elaborazione dei video può quindi richiedere più tempo della loro durata reale. Questo dato non viene usato come misura della capacità industriale del sistema. La verifica del tempo reale resta legata all'hardware destinato all'inferenza sulla linea.
+**Video 2**
+
+- manuale: cotto 6, poco 5, blob 7, rotto 14
+- sistema: cotto 6, poco 5, blob 6, rotto 15
+
+**Video 3**
+
+- manuale: cotto 2, poco 3, blob 1, rotto 8
+- sistema: cotto 2, poco 3, blob 1, rotto 9
+
+Il video 1 presenta zoom e illuminazione differenti. Per la classe rotto il conteggio manuale disponibile è 14, mentre il sistema ne rileva 17.
+
+Questi risultati mostrano che il prototipo è promettente ma non ancora equivalente a un sistema industriale certificato. Camera fissa, distanza costante, illuminazione controllata e singolo strato restano condizioni importanti.
+
+## Prestazioni
+
+La demo può essere eseguita in modalità completa oppure in modalità veloce, con inferenza su un frame ogni due. La modalità veloce è ora quella proposta di default nella dashboard perché rende l'esecuzione più fluida su CPU, senza modificare timestamp e logica di responso.
+
+La verifica del vero tempo reale industriale richiede hardware dedicato e sincronizzazione con encoder e attuatori.
