@@ -67,9 +67,7 @@ DEADLINE_X_RATIO = BASE_ACQUISITION_PROFILE.deadline_x
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_MODEL_PATH = PROJECT_ROOT / "models" / "best.pt"
-DEFAULT_DATASET_PATH = Path(
-    "C:/Users/Lello/Documents/GitHub/capstone-vision-quality/taralli_yolo_v2"
-)
+DEFAULT_DATASET_PATH = PROJECT_ROOT / "taralli_yolo_v2"
 TRACK_MAX_MISSED_FRAMES = 14
 TRACK_OBSERVATION_WINDOW = 12
 TRACK_MIN_FINAL_OBSERVATIONS = 4
@@ -1024,6 +1022,7 @@ def process_video(
     model_instance: Any | None = None,
     trapdoor_count: int = DEFAULT_TRAPDOOR_COUNT,
     save_detection_csv: bool = True,
+    frame_stride: int = 1,
 ) -> Path:
     """Analizza il video e salva su CSV le coordinate delle detection."""
 
@@ -1050,6 +1049,7 @@ def process_video(
 
     frame_number = 0
     saved_rows = 0
+    frame_stride = max(1, int(frame_stride))
 
     window_name = "visionTar - Q o ESC per terminare"
     if show_window:
@@ -1326,6 +1326,9 @@ def process_video(
                     or (total_frames > 0 and frame_number >= total_frames)
                 ):
                     progress_callback(frame_number, total_frames)
+
+                if (frame_number - 1) % frame_stride != 0:
+                    continue
 
                 frame_height, frame_width = frame.shape[:2]
 
