@@ -556,6 +556,14 @@ with input_col:
         except Exception as exc:
             st.error(f"Errore caricamento video: {exc}")
 
+    analysis_mode = st.selectbox(
+        "Frequenza analisi",
+        ["Completa · ogni frame", "Veloce · 1 frame su 2"],
+        index=0,
+        help="La modalità veloce dimezza le inferenze YOLO mantenendo frame e timestamp reali.",
+    )
+    frame_stride = 2 if analysis_mode.startswith("Veloce") else 1
+
     profile_labels = {key: profile.label for key, profile in PROFILES.items()}
     selected_key = st.selectbox(
         "Profilo",
@@ -972,6 +980,7 @@ if start_clicked:
                     model_instance=model,
                     trapdoor_count=st.session_state.trapdoor_count,
                     save_detection_csv=False,
+                    frame_stride=frame_stride,
                 )
 
                 scarti_path = run_input.with_name(
