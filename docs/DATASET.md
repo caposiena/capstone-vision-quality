@@ -1,33 +1,67 @@
-**Dataset**
+# Dataset
 
-Il dataset V2 contiene immagini reali di taralli annotate in formato YOLO. Ogni bounding box ha una sola classe tra buono, cotto, poco, blob e rotto.
+Il dataset V2 contiene immagini reali di taralli annotate in formato YOLO.
 
-**Composizione**
+Ogni oggetto appartiene a una delle cinque classi: **buono, cotto, poco, blob, rotto**.
 
-Le immagini complessive sono 96, per un totale di 1127 oggetti annotati.
+## Composizione
 
-buono: 330  
-cotto: 208  
-poco: 169  
-blob: 133  
-rotto: 287
+Totale: **96 immagini, 1127 oggetti**.
 
-La suddivisione usata per il training è la seguente:
+| Classe | Oggetti |
+|---|---:|
+| buono | 330 |
+| cotto | 208 |
+| poco | 169 |
+| blob | 133 |
+| rotto | 287 |
 
-train: 58 immagini, 736 oggetti  
-validation: 15 immagini, 186 oggetti  
-test: 23 immagini, 205 oggetti
+Split utilizzato nel progetto:
 
-Il test set proviene da un'acquisizione precedente rispetto a train e validation. È quindi più difficile e permette di osservare meglio cosa succede quando cambiano le condizioni di ripresa.
+| Split | Immagini | Oggetti |
+|---|---:|---:|
+| train | 58 | 736 |
+| validation | 15 | 186 |
+| test | 23 | 205 |
 
-Quando più frame provengono dallo stesso video, sequenze quasi identiche non vengono distribuite tra train e validation. In questo modo si evita che immagini molto simili finiscano contemporaneamente nei due insiemi.
+Il test set proviene da un'acquisizione differente rispetto a train e validation ed è quindi più severo.
 
-**Metriche**
+## Metriche del training
 
-Validation interna: precision 0.942, recall 0.972, mAP50 0.980, mAP50-95 0.613.
+Validation interna:
 
-Test indipendente: precision 0.466, recall 0.823, mAP50 0.546, mAP50-95 0.289.
+- precision 0.942
+- recall 0.972
+- mAP50 0.980
+- mAP50-95 0.613
 
-La differenza tra validation e test è il motivo per cui YOLO viene usato come detector ma il responso finale considera anche tracking, colore e forma.
+Test indipendente:
 
-Nel progetto è stato dato più peso al richiamo dei difetti. Un numero limitato di falsi positivi è accettabile perché i pezzi scartati possono essere controllati dall'operatore.
+- precision 0.466
+- recall 0.823
+- mAP50 0.546
+- mAP50-95 0.289
+
+La differenza tra validation e test conferma che il cambio di inquadratura e illuminazione incide in modo importante. Per questo nel sistema finale YOLO non lavora da solo: il responso viene stabilizzato con tracking e controlli OpenCV su colore e forma.
+
+## Benchmark tecnico della soglia operativa
+
+Con `conf=0.35`, sul dataset completo di 96 immagini:
+
+- TP: 1098
+- FP: 105
+- FN: 29
+- precision: 0.9127
+- recall: 0.9743
+- F1 detection: 0.9425
+- accuratezza di classe sui match: 0.9171
+
+Accuratezza di classe sui match:
+
+- blob: 100.00%
+- buono: 79.00%
+- cotto: 92.72%
+- poco: 96.43%
+- rotto: 98.91%
+
+Questo benchmark comprende anche dati di training e validation. È quindi utile per verificare il comportamento operativo del modello e scegliere la confidence, ma non sostituisce il test indipendente.
