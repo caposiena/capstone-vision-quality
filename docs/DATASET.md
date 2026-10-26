@@ -58,4 +58,4 @@ Con `conf=0.30`, sul dataset completo di 96 immagini:
 
 Il confronto con le altre soglie mostra che 0.30 mantiene un richiamo dei difetti molto alto senza portare il numero dei falsi scarti al livello della soglia 0.25.
 
-Questo benchmark comprende anche dati di training e validation. È quindi utile per la scelta della soglia operativa, ma non sostituisce il test indipendente.
+Questo benchmark comprende anche dati di training e validation. È quindi usato per scegliere la soglia operativa, mentre il comportamento del sistema completo viene verificato separatamente sui video reali descritti in docs/CALIBRAZIONE.md.
