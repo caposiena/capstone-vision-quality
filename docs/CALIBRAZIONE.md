@@ -1,10 +1,8 @@
 # Calibrazione e validazione
 
-Il sistema finale usa YOLO per localizzare e classificare i taralli e OpenCV per gestire video, ROI, tracking, colore, geometria e deadline.
+Il sistema usa YOLO per localizzare e classificare i taralli e OpenCV per gestire video, ROI, tracking, descrittori di colore e geometria, deadline e visualizzazione.
 
-La soglia operativa YOLO è **0.30**.
-
-La scelta è stata fatta guardando il problema come controllo qualità binario: difettoso contro buono. L'obiettivo principale è non lasciare passare prodotti difettosi; un numero limitato di falsi scarti è considerato meno grave di un difetto non intercettato.
+La soglia YOLO operativa è **0.30**. È stata scelta privilegiando il richiamo dei difetti rispetto alla riduzione assoluta dei falsi scarti.
 
 | Confidence | Precision difetti | Recall difetti | F1 difetti |
 |---|---:|---:|---:|
@@ -14,41 +12,59 @@ La scelta è stata fatta guardando il problema come controllo qualità binario: 
 | 0.40 | 85.60% | 94.73% | 89.93% |
 | 0.45 | 86.62% | 94.23% | 90.26% |
 
-La soglia 0.30 mantiene un richiamo dei difetti molto alto e riduce i falsi scarti rispetto a 0.25. Le soglie superiori privilegiano ulteriormente la precisione, ma iniziano a perdere più difetti.
+La soglia 0.30 mantiene un richiamo elevato dei difetti e riduce i falsi scarti rispetto a 0.25.
 
 ## Responso finale
 
-Il responso non viene preso dall'ultima detection disponibile.
+Il responso non viene preso da una singola detection.
 
-Le osservazioni dello stesso prodotto vengono associate in un track. Prima della deadline il sistema considera:
+Le osservazioni dello stesso prodotto vengono raccolte in un track. Prima della deadline il sistema combina:
 
-- voti e confidence YOLO;
-- descrittori HSV e Lab per cotto e poco;
-- descrittori geometrici per rotto;
+- classe e confidence YOLO;
+- descrittori HSV e Lab per i difetti di cottura;
+- descrittori geometrici per i prodotti rotti;
 - continuità temporale del track.
 
-Quando il prodotto attraversa la deadline, il responso viene fissato e non cambia più.
+Quando il prodotto attraversa la deadline, il responso viene fissato.
 
-## Verifica sui video
+Per le classi **cotto** e **poco**, YOLO individua il candidato mentre OpenCV conferma il gradiente di colore. Questa scelta riduce i falsi positivi legati a normali variazioni di luminosità.
 
-Il video 2 è stato usato come riferimento principale; il video 3 come verifica separata.
+## Prova video finale
 
-**Video 2**
+Sul video principale di circa tre minuti il sistema ha analizzato **1.307 prodotti**.
 
-- manuale: cotto 6, poco 5, blob 7, rotto 14
-- sistema: cotto 6, poco 5, blob 6, rotto 15
+Il riferimento manuale per i difetti di cottura era:
 
-**Video 3**
+- cotto: 5
+- poco: 5
 
-- manuale: cotto 2, poco 3, blob 1, rotto 8
-- sistema: cotto 2, poco 3, blob 1, rotto 9
+Con la taratura finale il sistema ha restituito:
 
-Il video 1 presenta zoom e illuminazione differenti. Per la classe rotto il conteggio manuale disponibile è 14, mentre il sistema ne rileva 17.
+- cotto: 5
+- poco: 5
 
-Questi risultati mostrano che il prototipo è promettente ma non ancora equivalente a un sistema industriale certificato. Camera fissa, distanza costante, illuminazione controllata e singolo strato restano condizioni importanti.
+Le classi geometriche sono state valutate separatamente durante la stessa prova e hanno mostrato un comportamento coerente con l'osservazione del video.
+
+È stato inoltre utilizzato un secondo video di controllo, con **1.129 prodotti analizzati**. Su questo video la classe cotto è rimasta stabile, mentre la classe poco è risultata inizialmente più severa. La soglia colore di poco è stata quindi ribilanciata mantenendo invariati YOLO, tracking, rotto e blob.
+
+Questa seconda prova è servita a evitare una taratura valida soltanto su una singola sequenza.
+
+## Condizioni di utilizzo
+
+Le acquisizioni del Capstone sono state eseguite su video registrati. La configurazione industriale prevista è più controllata:
+
+- camera fissa;
+- distanza costante dal prodotto;
+- illuminazione boxata;
+- schermatura dalla luce ambientale;
+- prodotto su singolo strato;
+- hardware dedicato all'inferenza;
+- sincronizzazione con encoder e attuatori.
+
+Queste condizioni non vengono usate per gonfiare i risultati del prototipo, ma rappresentano il contesto corretto per una successiva validazione industriale.
 
 ## Prestazioni
 
-La demo può essere eseguita in modalità completa oppure in modalità veloce, con inferenza su un frame ogni due. La modalità veloce è ora quella proposta di default nella dashboard perché rende l'esecuzione più fluida su CPU, senza modificare timestamp e logica di responso.
+La dashboard offre una modalità completa e una modalità veloce con inferenza su un frame ogni due. La modalità veloce è quella proposta per la demo perché riduce il carico CPU mantenendo timestamp, tracking e logica di responso.
 
-La verifica del vero tempo reale industriale richiede hardware dedicato e sincronizzazione con encoder e attuatori.
+Il prototipo dimostra l'intera catena software, mentre la verifica del vero tempo reale industriale resta legata all'hardware dedicato e all'integrazione fisica sulla linea.
