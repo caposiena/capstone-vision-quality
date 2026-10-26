@@ -21,7 +21,7 @@ from database import (
     init_db,
 )
 from video_source import open_usb_camera, open_video_file
-from visionTar import DEFAULT_MODEL_PATH, process_video
+from visionTar import process_video, resolve_model_path
 
 
 st.set_page_config(
@@ -196,8 +196,8 @@ def read_uploaded_video_frame(uploaded_file):
 
 
 @st.cache_resource
-def load_cached_model():
-    return YOLO(str(DEFAULT_MODEL_PATH))
+def load_cached_model(model_path: str):
+    return YOLO(model_path)
 
 
 def prepare_uploaded_video(uploaded_file) -> Path:
@@ -858,7 +858,8 @@ with right_col:
 
 
 if start_clicked:
-    if not DEFAULT_MODEL_PATH.exists():
+    model_path = resolve_model_path()
+    if not model_path.exists():
         st.error(
             "Modello YOLO non trovato. Copia best.pt in models/best.pt "
             "oppure mantieni il modello addestrato nella cartella runs del progetto."
@@ -866,7 +867,7 @@ if start_clicked:
     else:
         prep_status = st.status("Preparazione...", expanded=False)
         try:
-            model = load_cached_model()
+            model = load_cached_model(str(model_path))
             prep_status.update(label="Modello pronto", state="complete", expanded=False)
         except Exception as exc:
             prep_status.update(label="Errore modello", state="error")
@@ -966,7 +967,7 @@ if start_clicked:
             try:
                 process_video(
                     video_path=run_input,
-                    model_path=DEFAULT_MODEL_PATH,
+                    model_path=model_path,
                     test_mode=False,
                     roi_left=st.session_state.roi_left / 100.0,
                     roi_right=st.session_state.roi_right / 100.0,
