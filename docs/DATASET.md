@@ -46,22 +46,16 @@ La differenza tra validation e test conferma che il cambio di inquadratura e ill
 
 ## Benchmark tecnico della soglia operativa
 
-Con `conf=0.35`, sul dataset completo di 96 immagini:
+La soglia finale è stata scelta considerando il compito reale del sistema: distinguere prodotti difettosi da prodotti buoni.
 
-- TP: 1098
-- FP: 105
-- FN: 29
-- precision: 0.9127
-- recall: 0.9743
-- F1 detection: 0.9425
-- accuratezza di classe sui match: 0.9171
+Con `conf=0.30`, sul dataset completo di 96 immagini:
 
-Accuratezza di classe sui match:
+- precision difetti: 83.57%
+- recall difetti: 95.73%
+- F1 difetti: 89.24%
+- difetti persi nel benchmark: 34
+- falsi scarti nel benchmark: 150
 
-- blob: 100.00%
-- buono: 79.00%
-- cotto: 92.72%
-- poco: 96.43%
-- rotto: 98.91%
+Il confronto con le altre soglie mostra che 0.30 mantiene un richiamo dei difetti molto alto senza portare il numero dei falsi scarti al livello della soglia 0.25.
 
-Questo benchmark comprende anche dati di training e validation. È quindi utile per verificare il comportamento operativo del modello e scegliere la confidence, ma non sostituisce il test indipendente.
+Questo benchmark comprende anche dati di training e validation. È quindi utile per la scelta della soglia operativa, ma non sostituisce il test indipendente.
