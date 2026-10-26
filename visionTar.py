@@ -77,12 +77,24 @@ TRAINING_MODEL_PATH = (
     / "weights"
     / "best.pt"
 )
-DEFAULT_MODEL_PATH = (
-    PORTABLE_MODEL_PATH
-    if PORTABLE_MODEL_PATH.exists()
-    else TRAINING_MODEL_PATH
-)
 DEFAULT_DATASET_PATH = PROJECT_ROOT / "taralli_yolo_v2"
+
+
+def resolve_model_path() -> Path:
+    """Restituisce il primo best.pt disponibile nei percorsi previsti dal progetto."""
+    candidates = [PORTABLE_MODEL_PATH, TRAINING_MODEL_PATH]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    for candidate in PROJECT_ROOT.glob("runs/**/weights/best.pt"):
+        if candidate.is_file():
+            return candidate
+
+    return PORTABLE_MODEL_PATH
+
+
+DEFAULT_MODEL_PATH = resolve_model_path()
 TRACK_MAX_MISSED_FRAMES = 14
 TRACK_OBSERVATION_WINDOW = 12
 TRACK_MIN_FINAL_OBSERVATIONS = 4
