@@ -1,97 +1,84 @@
 # visionTar
 
-Sistema di visione artificiale per il controllo qualità dei taralli su nastro trasportatore.
+visionTar è un prototipo di controllo qualità visivo per taralli su nastro trasportatore, sviluppato come Capstone EPICODE.
 
-Il progetto nasce come Capstone EPICODE e simula un controllo in linea: il software individua i prodotti, li segue mentre attraversano l'area di ispezione, assegna un responso finale e registra gli scarti.
+Il sistema riconosce cinque classi: buono, cotto, poco, blob e rotto.
 
-Le classi sono:
+## Come funziona
 
-- buono
-- cotto
-- poco
-- blob
-- rotto
+YOLO individua i taralli nel frame e propone una classe con relativa confidence.
 
-## Architettura
+OpenCV gestisce il video, la ROI, il tracking, la deadline e alcuni controlli aggiuntivi su colore e geometria.
 
-La pipeline è volutamente ibrida.
+Le osservazioni dello stesso prodotto vengono raccolte durante il movimento sul nastro. Il responso finale viene fissato quando il track raggiunge la deadline.
 
-**YOLO** individua i singoli taralli e propone la classe con una confidence.
+Per cotto e poco, la classificazione YOLO viene confermata anche attraverso descrittori di colore HSV e Lab. Per rotto vengono utilizzati anche indicatori geometrici.
 
-**OpenCV** gestisce il video, la ROI, il tracking, la deadline, i descrittori di colore e forma, la visualizzazione e la simulazione delle botole di scarto.
-
-Le osservazioni dello stesso tarallo vengono raccolte in un track. Il responso non dipende quindi da un singolo frame: viene consolidato prima della deadline e poi congelato.
-
-Flusso essenziale:
-
-```text
-video -> ROI -> YOLO -> tracking -> colore/forma -> deadline
-      -> responso finale -> coordinate di scarto -> report di lotto
-```
+La soglia YOLO usata nel runtime è 0.30.
 
 ## Dashboard
 
 La dashboard Streamlit permette di:
 
-- caricare un video o predisporre una videocamera USB;
-- impostare prodotto, lotto, ROI e deadline;
-- scegliere la frequenza di analisi;
-- vedere il nastro con bounding box, tracking e responso;
-- visualizzare i contatori degli scarti per classe;
-- simulare l'associazione tra difetto e botole;
-- salvare sessioni ed esportare report CSV.
+- caricare un video;
+- inserire prodotto, lotto e data;
+- regolare ROI e deadline;
+- scegliere la modalità di elaborazione;
+- vedere detection, tracking e responso;
+- visualizzare i conteggi per classe;
+- simulare la botola interessata dallo scarto;
+- salvare ed esportare i risultati di lotto.
 
-Per la demo la modalità predefinita è **Veloce - 1 frame su 2**. Riduce il carico di inferenza mantenendo i riferimenti temporali del video. La modalità completa resta disponibile.
+La modalità veloce analizza un frame ogni due. Mantiene i riferimenti temporali del video, ma riduce il numero di osservazioni disponibili rispetto alla modalità completa.
 
-## Avvio
+## Dataset
 
-Ambiente di sviluppo: Python 3.11.
+Il dataset V2 contiene 96 immagini reali e 1127 oggetti annotati.
 
-Dopo il clone:
+Le classi sono:
 
-1. creare e attivare un ambiente virtuale;
-2. installare le dipendenze con `python -m pip install -r requirements.txt`;
-3. copiare il modello addestrato in `models/best.pt`;
-4. avviare la dashboard con:
+- buono: 330
+- cotto: 208
+- poco: 169
+- blob: 133
+- rotto: 287
 
-```powershell
-streamlit run .\dashboard.py
-```
+Lo split è composto da 58 immagini di train, 15 di validation e 23 di test.
 
-Il modello non è incluso nella repository.
-
-## File principali
-
-- `visionTar.py`: inferenza video, tracking e responso finale;
-- `dashboard.py`: interfaccia Streamlit;
-- `acquisition_config.py`: profili ROI e deadline;
-- `database.py`: sessioni, eventi di scarto e report;
-- `trainTar.py`: training YOLO;
-- `testTar.py`: valutazione del modello;
-- `buildDatasetV2.py`: preparazione del dataset.
-
-La documentazione tecnica essenziale è in `docs/DATASET.md` e `docs/CALIBRAZIONE.md`.
+I dettagli sono in docs/DATASET.md.
 
 ## Risultati
 
-Il dataset V2 contiene **96 immagini e 1127 oggetti annotati**.
+Sul benchmark tecnico usato per scegliere la soglia operativa, con confidence 0.30, la valutazione binaria difettoso/buono ha restituito:
 
-Sul benchmark tecnico dell'intero dataset, la soglia operativa è stata regolata in funzione dell'obiettivo reale del controllo qualità: intercettare il maggior numero possibile di difetti, accettando una quota limitata di falsi scarti.
+- precision difetti: 83.57%
+- recall difetti: 95.73%
+- F1 difetti: 89.24%
 
-Con confidence **0.30**, la valutazione binaria difettoso/buono ha restituito:
+Questo benchmark comprende anche immagini di train e validation e non rappresenta quindi una misura indipendente di generalizzazione.
 
-- recall difetti: **95.73%**
-- precision difetti: **83.57%**
-- F1 difetti: **89.24%**
+Le prove video sono state usate per verificare il comportamento dell'intera pipeline e per calibrare soprattutto i difetti di cottura.
 
-Il benchmark comprende anche immagini utilizzate durante training e validation, quindi serve a scegliere la soglia operativa e non va interpretato come misura indipendente di generalizzazione.
+## Stato del progetto
 
-La verifica video finale è stata eseguita su sequenze reali di linea, confrontando i conteggi automatici con un riferimento manuale. Sul video principale, di circa tre minuti e 1.307 prodotti analizzati, la taratura finale ha restituito 5 prodotti "cotto" e 5 "poco", in linea con il conteggio manuale. Un secondo video, usato come prova di robustezza, ha confermato la stabilità della classe "cotto" e ha evidenziato una maggiore sensibilità della classe "poco", che è stata quindi ribilanciata senza modificare le altre classi.
+Il Capstone dimostra l'intera catena software: acquisizione video, detection, tracking, decisione, localizzazione dello scarto e registrazione dei dati.
 
-## Limiti
+La parte fisica di espulsione non è implementata: le botole sono simulate.
 
-Il prototipo è stato validato su video registrati di linea. La configurazione industriale prevista utilizza camera fissa, illuminazione boxata e ambiente schermato dalle interferenze luminose esterne, condizioni più stabili rispetto alle acquisizioni usate durante lo sviluppo.
+La futura applicazione industriale prevede camera fissa, illuminazione controllata, encoder, attuatori e hardware dedicato all'inferenza.
 
-La sincronizzazione fisica tra camera, encoder e attuatori non fa parte della versione consegnata. Nel prototipo viene simulata l'associazione tra posizione del difetto e botole di scarto.
+## File principali
 
-Il tempo reale industriale richiede hardware di inferenza adeguato; i test del Capstone sono stati eseguiti anche su PC CPU-only.
+visionTar.py: motore di inferenza, tracking e responso.
+
+dashboard.py: interfaccia Streamlit.
+
+acquisition_config.py: profili di acquisizione.
+
+database.py: sessioni e report.
+
+trainTar.py: training YOLO.
+
+testTar.py: valutazione del modello.
+
+buildDatasetV2.py: preparazione del dataset.
