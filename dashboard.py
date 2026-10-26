@@ -31,11 +31,28 @@ st.set_page_config(
 )
 
 
+CONFIG_DEFAULTS_VERSION = 2
+
+
 def init_state() -> None:
     if "profile_key" not in st.session_state:
         st.session_state.profile_key = DEFAULT_PROFILE_KEY
+
     profile = PROFILES[st.session_state.profile_key]
     defaults = profile.as_percentages()
+
+    if st.session_state.get("config_defaults_version") != CONFIG_DEFAULTS_VERSION:
+        st.session_state.profile_key = DEFAULT_PROFILE_KEY
+        profile = PROFILES[DEFAULT_PROFILE_KEY]
+        defaults = profile.as_percentages()
+        st.session_state.roi_left = defaults["left"]
+        st.session_state.roi_right = defaults["right"]
+        st.session_state.roi_top = defaults["top"]
+        st.session_state.roi_bottom = defaults["bottom"]
+        st.session_state.deadline_x = defaults["deadline"]
+        st.session_state.config_defaults_version = CONFIG_DEFAULTS_VERSION
+        return
+
     for key, value in {
         "roi_left": defaults["left"],
         "roi_right": defaults["right"],
