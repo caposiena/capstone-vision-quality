@@ -116,25 +116,25 @@ TRACK_MIN_CROSSING_DELTA = 4
 TRACK_DEADLINE_RESCUE_RATIO = 0.08
 COLOR_INNER_CROP_RATIO = 0.15
 
-# Fusion colore prudenziale: il colore non sostituisce YOLO, ma puo
-# rafforzare una candidatura "cotto" o "poco" quando i descrittori del track
-# sono coerenti con i profili osservati nel dominio video controllato.
-COTTO_MAX_V = 190.0
-COTTO_MAX_LAB_L = 168.0
-COTTO_MIN_S = 125.0
-POCO_MIN_V = 212.0
-POCO_MIN_LAB_L = 198.0
-POCO_MAX_S = 105.0
+# Profilo colore del dominio controllato.
+# YOLO propone la classe; per cotto e poco il gradiente viene confermato
+# sui descrittori mediani del track prima di generare lo scarto.
+COTTO_MAX_V = 192.0
+COTTO_MAX_LAB_L = 170.0
+COTTO_MIN_S = 122.0
+POCO_MIN_V = 218.0
+POCO_MIN_LAB_L = 210.0
+POCO_MAX_S = 95.0
 COTTO_COLOR_SUPPORTED_THRESHOLD = 0.28
 COTTO_COLOR_OVERRIDE_MIN_OBSERVATIONS = 2
 COTTO_COLOR_OVERRIDE_MIN_AVG_CONFIDENCE = 0.50
 POCO_COLOR_SUPPORTED_THRESHOLD = 0.32
-POCO_COLOR_MIN_OBSERVATIONS = 2
+POCO_COLOR_MIN_OBSERVATIONS = 3
 
 # Conferma finale di luminosita per "poco".
-# Calibrazione sperimentale derivata dal confronto visivo dei 9 track "poco"
-# del video 2: i 5 casi realmente poco cotti mostrano Lab L >= 208.
-POCO_FINAL_MIN_LAB_L = 208.0
+# La soglia e volutamente prudenziale per evitare che normali variazioni
+# di luce vengano interpretate come prodotto poco cotto.
+POCO_FINAL_MIN_LAB_L = 215.0
 
 # Supporto geometrico prudenziale per la classe rotto.
 # Le soglie sono iniziali e verranno validate sul benchmark manuale del video 2.
