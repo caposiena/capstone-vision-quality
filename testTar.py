@@ -48,7 +48,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--conf",
         type=float,
-        default=0.35,
+        default=0.30,
         help="Soglia confidence per le immagini annotate.",
     )
     parser.add_argument(
