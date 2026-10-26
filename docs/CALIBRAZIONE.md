@@ -2,14 +2,19 @@
 
 Il sistema finale usa YOLO per localizzare e classificare i taralli e OpenCV per gestire video, ROI, tracking, colore, geometria e deadline.
 
-La soglia operativa YOLO è **0.35**. Sul benchmark tecnico dell'intero dataset questa soglia ha migliorato l'equilibrio tra falsi positivi e falsi negativi rispetto a 0.25:
+La soglia operativa YOLO è **0.30**.
 
-| Confidence | Precision | Recall | F1 |
+La scelta è stata fatta guardando il problema come controllo qualità binario: difettoso contro buono. L'obiettivo principale è non lasciare passare prodotti difettosi; un numero limitato di falsi scarti è considerato meno grave di un difetto non intercettato.
+
+| Confidence | Precision difetti | Recall difetti | F1 difetti |
 |---|---:|---:|---:|
-| 0.25 | 87.18% | 98.94% | 92.68% |
-| 0.35 | 91.27% | 97.43% | 94.25% |
+| 0.25 | 81.62% | 96.36% | 88.38% |
+| 0.30 | 83.57% | 95.73% | 89.24% |
+| 0.35 | 84.73% | 95.36% | 89.73% |
+| 0.40 | 85.60% | 94.73% | 89.93% |
+| 0.45 | 86.62% | 94.23% | 90.26% |
 
-Il modello non è stato riaddestrato durante questo confronto: è migliorata la scelta della soglia operativa e, soprattutto, la qualità della verifica.
+La soglia 0.30 mantiene un richiamo dei difetti molto alto e riduce i falsi scarti rispetto a 0.25. Le soglie superiori privilegiano ulteriormente la precisione, ma iniziano a perdere più difetti.
 
 ## Responso finale
 
