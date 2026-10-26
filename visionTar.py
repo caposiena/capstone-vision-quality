@@ -27,6 +27,7 @@ from __future__ import annotations
 import csv
 import math
 import os
+import time
 from collections import defaultdict, deque
 from pathlib import Path
 from typing import Any, Callable
@@ -43,6 +44,11 @@ except (ImportError, ModuleNotFoundError):
 
 import cv2
 from ultralytics import YOLO
+
+try:
+    import keyboard
+except (ImportError, ModuleNotFoundError):
+    keyboard = None
 
 from acquisition_config import DEFAULT_TRAPDOOR_COUNT, get_profile
 
@@ -1050,6 +1056,7 @@ def process_video(
     trapdoor_count: int = DEFAULT_TRAPDOOR_COUNT,
     save_detection_csv: bool = True,
     frame_stride: int = 1,
+    pause_with_space: bool = False,
 ) -> Path:
     """Analizza il video e salva su CSV le coordinate delle detection."""
 
@@ -1077,6 +1084,8 @@ def process_video(
     frame_number = 0
     saved_rows = 0
     frame_stride = max(1, int(frame_stride))
+    paused = False
+    space_was_down = False
 
     window_name = "visionTar - Q o ESC per terminare"
     if show_window:
@@ -1346,6 +1355,19 @@ def process_video(
                     break
 
                 frame_number += 1
+
+                if pause_with_space and keyboard is not None:
+                    space_is_down = keyboard.is_pressed("space")
+                    if space_is_down and not space_was_down:
+                        paused = not paused
+                    space_was_down = space_is_down
+
+                    while paused:
+                        time.sleep(0.08)
+                        space_is_down = keyboard.is_pressed("space")
+                        if space_is_down and not space_was_down:
+                            paused = False
+                        space_was_down = space_is_down
 
                 if progress_callback is not None and (
                     frame_number == 1
