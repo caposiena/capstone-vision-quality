@@ -1,13 +1,11 @@
-Questa cartella ospita il modello addestrato usato per l'inferenza.
+# Modello
 
-Il file dei pesi non è incluso nella repository.
+Questa cartella contiene il modello YOLO usato per l'inferenza.
 
-Per eseguire il progetto, copiare qui il modello YOLO addestrato e rinominarlo:
+Il file dei pesi non è versionato nella repository.
 
-best.pt
-
-Percorso atteso dal software:
+Il runtime cerca il modello in:
 
 models/best.pt
 
-Il modello usato nel Capstone è stato ottenuto dal training sul dataset V2 descritto in docs/DATASET.md.
+Il modello utilizzato nel Capstone deriva dal training sul dataset V2 descritto in docs/DATASET.md.
